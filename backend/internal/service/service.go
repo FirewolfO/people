@@ -1,0 +1,419 @@
+package service
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net/url"
+	"regexp"
+	"strings"
+	"time"
+
+	"people/internal/model"
+	"people/internal/store"
+
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
+)
+
+var (
+	ErrInvalid      = errors.New("invalid argument")
+	ErrUnauthorized = errors.New("unauthorized")
+	ErrForbidden    = errors.New("forbidden")
+	ErrNotFound     = errors.New("not found")
+	ErrConflict     = errors.New("conflict")
+)
+
+var usernamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{2,63}$`)
+
+type Service struct {
+	store      *store.Store
+	sessionTTL time.Duration
+}
+
+type EmployeeInput struct {
+	EmployeeNo  string `json:"employeeNo"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+	Email       string `json:"email"`
+	Phone       string `json:"phone"`
+	Department  string `json:"department"`
+	Title       string `json:"title"`
+	Role        string `json:"role"`
+	Status      string `json:"status"`
+}
+
+type Page struct {
+	Items    []model.Employee `json:"items"`
+	Total    int64            `json:"total"`
+	Page     int              `json:"page"`
+	PageSize int              `json:"pageSize"`
+}
+
+type TokenResult struct {
+	AccessToken string          `json:"access_token"`
+	TokenType   string          `json:"token_type"`
+	ExpiresIn   int64           `json:"expires_in"`
+	Scope       string          `json:"scope"`
+	User        *model.Employee `json:"user,omitempty"`
+}
+
+func New(store *store.Store, sessionTTL time.Duration) *Service {
+	return &Service{store: store, sessionTTL: sessionTTL}
+}
+
+func (s *Service) Login(username, password string) (*model.Employee, string, error) {
+	var employee model.Employee
+	if err := s.store.DB.Where("LOWER(username) = ?", strings.ToLower(strings.TrimSpace(username))).First(&employee).Error; err != nil {
+		return nil, "", ErrUnauthorized
+	}
+	if employee.Status != model.StatusEnabled {
+		return nil, "", ErrUnauthorized
+	}
+	if !employee.MustChangePassword {
+		if bcrypt.CompareHashAndPassword([]byte(employee.PasswordHash), []byte(password)) != nil {
+			return nil, "", ErrUnauthorized
+		}
+	}
+	token, err := randomToken("ps_", 32)
+	if err != nil {
+		return nil, "", err
+	}
+	now := time.Now().UTC()
+	session := model.Session{EmployeeID: employee.ID, TokenHash: hash(token), ExpiresAt: now.Add(s.sessionTTL)}
+	if err := s.store.DB.Create(&session).Error; err != nil {
+		return nil, "", err
+	}
+	employee.LastLoginAt = &now
+	if err := s.store.DB.Model(&employee).Update("last_login_at", now).Error; err != nil {
+		return nil, "", err
+	}
+	return &employee, token, nil
+}
+
+func (s *Service) AuthenticateSession(token string) (*model.Employee, *model.Session, error) {
+	if token == "" {
+		return nil, nil, ErrUnauthorized
+	}
+	var session model.Session
+	err := s.store.DB.Preload("Employee").Where("token_hash = ? AND revoked_at IS NULL AND expires_at > ?", hash(token), time.Now().UTC()).First(&session).Error
+	if err != nil || session.Employee.Status != model.StatusEnabled {
+		return nil, nil, ErrUnauthorized
+	}
+	return &session.Employee, &session, nil
+}
+
+func (s *Service) Logout(sessionID uint) error {
+	now := time.Now().UTC()
+	return s.store.DB.Model(&model.Session{}).Where("id = ?", sessionID).Update("revoked_at", now).Error
+}
+
+func (s *Service) ChangePassword(employee *model.Employee, sessionID uint, currentPassword, newPassword string) error {
+	if len(newPassword) < 8 || len(newPassword) > 72 {
+		return fmt.Errorf("%w: 新密码长度必须为 8 到 72 个字符", ErrInvalid)
+	}
+	if !employee.MustChangePassword && bcrypt.CompareHashAndPassword([]byte(employee.PasswordHash), []byte(currentPassword)) != nil {
+		return fmt.Errorf("%w: 当前密码错误", ErrInvalid)
+	}
+	hashValue, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	return s.store.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.Employee{}).Where("id = ?", employee.ID).Updates(map[string]any{
+			"password_hash": string(hashValue), "must_change_password": false, "password_changed_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Session{}).Where("employee_id = ? AND id <> ? AND revoked_at IS NULL", employee.ID, sessionID).
+			Update("revoked_at", now).Error
+	})
+}
+
+func (s *Service) ListEmployees(search string, page, pageSize int) (Page, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	query := s.store.DB.Model(&model.Employee{})
+	if value := strings.TrimSpace(search); value != "" {
+		like := "%" + value + "%"
+		query = query.Where("employee_no LIKE ? OR username LIKE ? OR display_name LIKE ? OR email LIKE ? OR department LIKE ?", like, like, like, like, like)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return Page{}, err
+	}
+	var items []model.Employee
+	if err := query.Order("created_at DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error; err != nil {
+		return Page{}, err
+	}
+	return Page{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+func (s *Service) CreateEmployee(input EmployeeInput) (*model.Employee, error) {
+	normalized, err := normalizeEmployee(input)
+	if err != nil {
+		return nil, err
+	}
+	var count int64
+	if err := s.store.DB.Model(&model.Employee{}).Where("employee_no = ? OR LOWER(username) = ?", normalized.EmployeeNo, strings.ToLower(normalized.Username)).Count(&count).Error; err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		return nil, fmt.Errorf("%w: 工号或用户名已存在", ErrConflict)
+	}
+	publicID, err := randomToken("pep_", 18)
+	if err != nil {
+		return nil, err
+	}
+	employee := model.Employee{
+		PublicID: publicID, EmployeeNo: normalized.EmployeeNo, Username: normalized.Username,
+		DisplayName: normalized.DisplayName, Email: normalized.Email, Phone: normalized.Phone,
+		Department: normalized.Department, Title: normalized.Title, Role: normalized.Role,
+		Status: normalized.Status, MustChangePassword: true,
+	}
+	if err := s.store.DB.Create(&employee).Error; err != nil {
+		return nil, err
+	}
+	return &employee, nil
+}
+
+func (s *Service) UpdateEmployee(publicID string, input EmployeeInput) (*model.Employee, error) {
+	var employee model.Employee
+	if err := s.store.DB.Where("public_id = ?", publicID).First(&employee).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	normalized, err := normalizeEmployee(input)
+	if err != nil {
+		return nil, err
+	}
+	var count int64
+	if err := s.store.DB.Model(&model.Employee{}).Where("id <> ? AND (employee_no = ? OR LOWER(username) = ?)", employee.ID, normalized.EmployeeNo, strings.ToLower(normalized.Username)).Count(&count).Error; err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		return nil, fmt.Errorf("%w: 工号或用户名已存在", ErrConflict)
+	}
+	if employee.Username == "admin" {
+		normalized.Username = "admin"
+		normalized.Role = model.RoleAdmin
+		normalized.Status = model.StatusEnabled
+	}
+	if err := s.store.DB.Model(&employee).Updates(map[string]any{
+		"employee_no": normalized.EmployeeNo, "username": normalized.Username,
+		"display_name": normalized.DisplayName, "email": normalized.Email, "phone": normalized.Phone,
+		"department": normalized.Department, "title": normalized.Title, "role": normalized.Role, "status": normalized.Status,
+	}).Error; err != nil {
+		return nil, err
+	}
+	return &employee, s.store.DB.Where("id = ?", employee.ID).First(&employee).Error
+}
+
+func (s *Service) DeleteEmployee(publicID string, actorID uint) error {
+	var employee model.Employee
+	if err := s.store.DB.Where("public_id = ?", publicID).First(&employee).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if employee.ID == actorID || employee.Username == "admin" {
+		return fmt.Errorf("%w: 不能删除当前用户或内置管理员", ErrInvalid)
+	}
+	return s.store.DB.Delete(&employee).Error
+}
+
+func (s *Service) Authorize(employee *model.Employee, clientID, redirectURI, state string) (string, error) {
+	if employee.MustChangePassword {
+		return "", fmt.Errorf("%w: 请先设置登录密码", ErrForbidden)
+	}
+	client, err := s.oauthClientByID(clientID)
+	if err != nil || !containsLine(client.RedirectURIs, redirectURI) {
+		return "", fmt.Errorf("%w: OAuth 客户端或回调地址无效", ErrInvalid)
+	}
+	code, err := randomToken("poc_", 32)
+	if err != nil {
+		return "", err
+	}
+	record := model.OAuthCode{
+		CodeHash: hash(code), ClientID: clientID, EmployeeID: employee.ID,
+		RedirectURI: redirectURI, ExpiresAt: time.Now().UTC().Add(5 * time.Minute),
+	}
+	if err := s.store.DB.Create(&record).Error; err != nil {
+		return "", err
+	}
+	target, _ := url.Parse(redirectURI)
+	query := target.Query()
+	query.Set("code", code)
+	query.Set("state", state)
+	target.RawQuery = query.Encode()
+	return target.String(), nil
+}
+
+func (s *Service) ExchangeCode(clientID, clientSecret, code, redirectURI string) (TokenResult, error) {
+	if _, err := s.authenticateOAuthClient(clientID, clientSecret); err != nil {
+		return TokenResult{}, err
+	}
+	var result TokenResult
+	err := s.store.DB.Transaction(func(tx *gorm.DB) error {
+		var record model.OAuthCode
+		if err := tx.Where("code_hash = ? AND client_id = ? AND redirect_uri = ? AND used_at IS NULL AND expires_at > ?",
+			hash(code), clientID, redirectURI, time.Now().UTC()).First(&record).Error; err != nil {
+			return ErrUnauthorized
+		}
+		var employee model.Employee
+		if err := tx.First(&employee, record.EmployeeID).Error; err != nil || employee.Status != model.StatusEnabled {
+			return ErrUnauthorized
+		}
+		consumed := tx.Model(&model.OAuthCode{}).Where("id = ? AND used_at IS NULL", record.ID).Update("used_at", time.Now().UTC())
+		if consumed.Error != nil {
+			return consumed.Error
+		}
+		if consumed.RowsAffected != 1 {
+			return ErrUnauthorized
+		}
+		var err error
+		result, err = s.issueOAuthTokenWithDB(tx, clientID, employee.ID, "openid profile", &employee)
+		return err
+	})
+	return result, err
+}
+
+func (s *Service) ClientCredentials(clientID, clientSecret, scope string) (TokenResult, error) {
+	client, err := s.authenticateOAuthClient(clientID, clientSecret)
+	if err != nil {
+		return TokenResult{}, err
+	}
+	if scope == "" {
+		scope = "employees.read"
+	}
+	for _, requested := range strings.Fields(scope) {
+		if !containsField(client.AllowedScopes, requested) {
+			return TokenResult{}, fmt.Errorf("%w: OAuth scope 无效", ErrInvalid)
+		}
+	}
+	return s.issueOAuthToken(clientID, 0, scope, nil)
+}
+
+func (s *Service) OAuthIdentity(token string) (*model.Employee, string, error) {
+	var record model.OAuthToken
+	if err := s.store.DB.Where("token_hash = ? AND expires_at > ?", hash(token), time.Now().UTC()).First(&record).Error; err != nil {
+		return nil, "", ErrUnauthorized
+	}
+	if record.EmployeeID == 0 {
+		return nil, record.Scope, nil
+	}
+	var employee model.Employee
+	if err := s.store.DB.First(&employee, record.EmployeeID).Error; err != nil || employee.Status != model.StatusEnabled {
+		return nil, "", ErrUnauthorized
+	}
+	return &employee, record.Scope, nil
+}
+
+func (s *Service) issueOAuthToken(clientID string, employeeID uint, scope string, employee *model.Employee) (TokenResult, error) {
+	return s.issueOAuthTokenWithDB(s.store.DB, clientID, employeeID, scope, employee)
+}
+
+func (s *Service) issueOAuthTokenWithDB(db *gorm.DB, clientID string, employeeID uint, scope string, employee *model.Employee) (TokenResult, error) {
+	token, err := randomToken("pat_", 32)
+	if err != nil {
+		return TokenResult{}, err
+	}
+	ttl := time.Hour
+	if employeeID == 0 {
+		ttl = 10 * time.Minute
+	}
+	if err := db.Create(&model.OAuthToken{
+		TokenHash: hash(token), ClientID: clientID, EmployeeID: employeeID, Scope: scope, ExpiresAt: time.Now().UTC().Add(ttl),
+	}).Error; err != nil {
+		return TokenResult{}, err
+	}
+	return TokenResult{AccessToken: token, TokenType: "Bearer", ExpiresIn: int64(ttl.Seconds()), Scope: scope, User: employee}, nil
+}
+
+func (s *Service) oauthClientByID(clientID string) (*model.OAuthClient, error) {
+	var client model.OAuthClient
+	if err := s.store.DB.Where("client_id = ?", clientID).First(&client).Error; err != nil {
+		return nil, ErrUnauthorized
+	}
+	return &client, nil
+}
+
+func (s *Service) authenticateOAuthClient(clientID, clientSecret string) (*model.OAuthClient, error) {
+	client, err := s.oauthClientByID(clientID)
+	if err != nil || clientSecret == "" || subtle.ConstantTimeCompare([]byte(client.SecretHash), []byte(hash(clientSecret))) != 1 {
+		return nil, ErrUnauthorized
+	}
+	return client, nil
+}
+
+func normalizeEmployee(input EmployeeInput) (EmployeeInput, error) {
+	input.EmployeeNo = strings.ToUpper(strings.TrimSpace(input.EmployeeNo))
+	input.Username = strings.TrimSpace(input.Username)
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
+	input.Phone = strings.TrimSpace(input.Phone)
+	input.Department = strings.TrimSpace(input.Department)
+	input.Title = strings.TrimSpace(input.Title)
+	input.Role = strings.ToLower(strings.TrimSpace(input.Role))
+	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
+	if input.EmployeeNo == "" || len(input.EmployeeNo) > 32 || !usernamePattern.MatchString(input.Username) || input.DisplayName == "" || len(input.DisplayName) > 100 {
+		return input, fmt.Errorf("%w: 工号、用户名或姓名格式无效", ErrInvalid)
+	}
+	if input.Role == "" {
+		input.Role = model.RoleEmployee
+	}
+	if input.Role != model.RoleAdmin && input.Role != model.RoleEmployee {
+		return input, fmt.Errorf("%w: 角色无效", ErrInvalid)
+	}
+	if input.Status == "" {
+		input.Status = model.StatusEnabled
+	}
+	if input.Status != model.StatusEnabled && input.Status != model.StatusDisabled {
+		return input, fmt.Errorf("%w: 状态无效", ErrInvalid)
+	}
+	if len(input.Email) > 255 || len(input.Phone) > 32 || len(input.Department) > 100 || len(input.Title) > 100 {
+		return input, fmt.Errorf("%w: 员工资料过长", ErrInvalid)
+	}
+	return input, nil
+}
+
+func randomToken(prefix string, size int) (string, error) {
+	value := make([]byte, size)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	return prefix + base64.RawURLEncoding.EncodeToString(value), nil
+}
+
+func hash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func containsLine(lines, value string) bool {
+	for _, item := range strings.Split(lines, "\n") {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
+func containsField(fields, value string) bool {
+	for _, item := range strings.Fields(fields) {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}

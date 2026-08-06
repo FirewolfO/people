@@ -1,0 +1,9 @@
+backend/people.db
+backend/*.db-shm
+backend/*.db-wal
+backend/.env
+frontend/dist/
+frontend/node_modules/
+frontend/.env
+frontend/.env.local
+.DS_Store

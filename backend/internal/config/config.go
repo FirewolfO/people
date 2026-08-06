@@ -1,0 +1,62 @@
+package config
+
+import (
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type Config struct {
+	Address                string
+	DatabaseDSN            string
+	AllowedOrigins         []string
+	GatewayAccessKey       string
+	GatewaySecretKey       string
+	SessionTTL             time.Duration
+	CookieSecure           bool
+	PermissionClientID     string
+	PermissionClientSecret string
+	PermissionRedirectURIs []string
+}
+
+func Load() Config {
+	return Config{
+		Address:                env("PEOPLE_ADDR", ":8085"),
+		DatabaseDSN:            env("PEOPLE_DB_DSN", "people.db"),
+		AllowedOrigins:         split(env("PEOPLE_ALLOWED_ORIGINS", "http://localhost:5177,http://127.0.0.1:5177")),
+		GatewayAccessKey:       env("PEOPLE_GATEWAY_ACCESS_KEY", "gwak_gateway_local"),
+		GatewaySecretKey:       env("PEOPLE_GATEWAY_SECRET_KEY", "local-development-gateway-signin-secret-key"),
+		SessionTTL:             time.Duration(envInt("PEOPLE_SESSION_HOURS", 12)) * time.Hour,
+		CookieSecure:           strings.EqualFold(env("PEOPLE_COOKIE_SECURE", "false"), "true"),
+		PermissionClientID:     env("PEOPLE_PERMISSION_CLIENT_ID", "permission-ui"),
+		PermissionClientSecret: env("PEOPLE_PERMISSION_CLIENT_SECRET", "permission-local-client-secret-change-me"),
+		PermissionRedirectURIs: split(env("PEOPLE_PERMISSION_REDIRECT_URIS", "http://localhost:5173/oauth/callback,http://127.0.0.1:5173/oauth/callback")),
+	}
+}
+
+func env(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func split(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if value := strings.TrimSpace(part); value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
+}
