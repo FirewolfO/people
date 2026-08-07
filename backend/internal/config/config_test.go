@@ -8,6 +8,7 @@ func TestDefaultOAuthRedirectURIsIncludeNetworkFrontends(t *testing.T) {
 
 	configured := Load()
 	assertContains(t, configured.PermissionRedirectURIs, "http://10.251.237.216:5174/oauth/callback")
+	assertContains(t, configured.PermissionRedirectURIs, "http://10.251.237.216:5175/oauth/callback")
 	assertContains(t, configured.PermissionRedirectURIs, "http://10.251.237.216:5178/oauth/callback")
 	assertContains(t, configured.GatewayRedirectURIs, "http://10.251.237.216:5175/oauth/callback")
 }
