@@ -68,7 +68,7 @@ type tokenRequest struct {
 	Scope        string `json:"scope"`
 }
 
-func NewServer(address string, verifier *security.GatewayVerifier, svc *service.Service, sessionTTL time.Duration, cookieSecure bool) *server.Hertz {
+func NewServer(address string, verifier, innerVerifier *security.GatewayVerifier, svc *service.Service, sessionTTL time.Duration, cookieSecure bool) *server.Hertz {
 	h := server.Default(server.WithHostPorts(address))
 	a := &API{service: svc, sessionTTL: sessionTTL, cookieSecure: cookieSecure}
 	h.Use(requestIDMiddleware())
@@ -92,6 +92,12 @@ func NewServer(address string, verifier *security.GatewayVerifier, svc *service.
 	api.POST("/oauth/authorize", a.requireCSRF(), a.authorize)
 	api.POST("/oauth/token", a.token)
 	api.GET("/oauth/userinfo", a.userinfo)
+
+	inner := h.Group("/api/v1/inner")
+	inner.Use(innerVerifier.Middleware())
+	inner.GET("/directory/employees", a.listDirectoryEmployees)
+	inner.GET("/directory/employees/:id", a.getDirectoryEmployee)
+	inner.GET("/directory/departments", a.listDirectoryDepartments)
 	return h
 }
 
@@ -260,6 +266,21 @@ func (a *API) deleteDepartment(_ context.Context, c *app.RequestContext) {
 		return
 	}
 	ok(c, utils.H{"deleted": true})
+}
+
+func (a *API) listDirectoryEmployees(_ context.Context, c *app.RequestContext) {
+	result, err := a.service.ListEmployees(string(c.Query("q")), queryInt(c, "page", 1), queryInt(c, "pageSize", 100))
+	respond(c, result, err)
+}
+
+func (a *API) getDirectoryEmployee(_ context.Context, c *app.RequestContext) {
+	result, err := a.service.GetEmployee(c.Param("id"))
+	respond(c, result, err)
+}
+
+func (a *API) listDirectoryDepartments(_ context.Context, c *app.RequestContext) {
+	result, err := a.service.ListDepartments(string(c.Query("q")))
+	respond(c, result, err)
 }
 
 func (a *API) authorize(_ context.Context, c *app.RequestContext) {

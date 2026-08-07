@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Delete, Edit, Plus, Search } from '@element-plus/icons-vue'
 import { peopleApi, apiMessage } from '@/api'
+import { buildDepartmentTree } from '@/departments'
 import { auth } from '@/auth'
 import type { Department, Employee, EmployeeInput } from '@/types'
 
 const items = ref<Employee[]>([])
 const departments = ref<Department[]>([])
+const departmentTree = computed(() => buildDepartmentTree(departments.value))
 const total = ref(0)
 const loading = ref(false)
 const query = reactive({ q: '', page: 1, pageSize: 20 })
@@ -124,9 +126,7 @@ onMounted(() => {
         <el-form-item label="邮箱"><el-input v-model="form.email" /></el-form-item>
         <el-form-item label="手机号"><el-input v-model="form.phone" /></el-form-item>
         <el-form-item :label="form.role === 'employee' ? '部门' : '部门（可选）'" prop="departmentId">
-          <el-select v-model="form.departmentId" filterable clearable placeholder="选择部门">
-            <el-option v-for="department in departments" :key="department.id" :label="department.name" :value="department.id" :disabled="department.status === 'disabled'" />
-          </el-select>
+          <el-tree-select v-model="form.departmentId" :data="departmentTree" node-key="id" :props="{ label: 'name', children: 'children', disabled: (node: Department) => node.status === 'disabled' }" filterable check-strictly clearable placeholder="选择部门" />
         </el-form-item>
         <el-form-item label="职务"><el-input v-model="form.title" /></el-form-item>
         <el-form-item label="角色"><el-select v-model="form.role" :disabled="form.username === 'admin'"><el-option label="员工" value="employee" /><el-option label="管理员" value="admin" /></el-select></el-form-item>

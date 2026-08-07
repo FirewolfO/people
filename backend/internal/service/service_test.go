@@ -92,7 +92,11 @@ func TestEmployeeRequiresManagedDepartment(t *testing.T) {
 	if _, err := svc.CreateEmployee(input); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("CreateEmployee() with unknown department error = %v, want invalid", err)
 	}
-	department, err := svc.CreateDepartment(DepartmentInput{Code: "sales", Name: "销售部", Status: model.StatusEnabled})
+	parent, err := svc.CreateDepartment(DepartmentInput{Code: "business", Name: "业务部", Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	department, err := svc.CreateDepartment(DepartmentInput{ParentID: parent.ID, Code: "sales", Name: "销售部", Status: model.StatusEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +110,12 @@ func TestEmployeeRequiresManagedDepartment(t *testing.T) {
 	}
 	if err := svc.DeleteDepartment(department.ID); !errors.Is(err, ErrConflict) {
 		t.Fatalf("DeleteDepartment() referenced error = %v, want conflict", err)
+	}
+	if err := svc.DeleteDepartment(parent.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("DeleteDepartment() with child error = %v, want conflict", err)
+	}
+	if _, err := svc.UpdateDepartment(parent.ID, DepartmentInput{ParentID: department.ID, Code: parent.Code, Name: parent.Name, Status: model.StatusEnabled}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("UpdateDepartment() cycle error = %v, want invalid", err)
 	}
 	updated, err := svc.UpdateDepartment(department.ID, DepartmentInput{Code: "sales", Name: "全球销售部", Status: model.StatusEnabled})
 	if err != nil {

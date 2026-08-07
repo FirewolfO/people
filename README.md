@@ -23,11 +23,21 @@ People 是企业内部员工信息系统，账号体系与 Sign-in 完全隔离�
 
 ## 部门管理
 
-管理员可在管理前端维护部门编码、名称、描述和启停状态。新增或修改普通员工时必须选择一个已启用部门，管理员账号可以不属于部门。部门名称修改后会同步到员工资料；仍有关联员工的部门不能删除。旧数据库中的部门文本会在首次升级启动时自动转换为受管理部门。
+管理员可在管理前端维护多级部门树，包括上级部门、编码、名称、描述和启停状态。新增或修改普通员工时必须选择一个已启用部门，管理员账号可以不属于部门。部门名称修改后会同步到员工资料；仍有关联员工或下级部门的部门不能删除，修改上级部门时会拒绝自引用和循环层级。旧数据库中的部门文本会在首次升级启动时自动转换为受管理部门。
+
+## Inner 员工目录
+
+Permission 不读取 People 数据库，而是通过 Gateway Inner 使用独立 AK/SK 实时获取员工和部门目录：
+
+- `GET /api/inner/people/directory/employees`
+- `GET /api/inner/people/directory/employees/:id`
+- `GET /api/inner/people/directory/departments`
+
+People 后端对应的上游路径为 `/api/v1/inner/directory/**`，只接受 `PEOPLE_INNER_ACCESS_KEY`、`PEOPLE_INNER_SECRET_KEY` 对应的 Gateway 系统签名。部门响应中的 `parentId` 表示父部门，空值表示顶级部门。
 
 ## OAuth
 
-People 提供 OAuth 2.0 授权码模式供内部系统登录，并提供客户端凭证模式供可信后端同步员工目录。默认预置 Permission 和 Gateway Admin 两个客户端：
+People 提供 OAuth 2.0 授权码模式供内部系统登录。Permission 的员工与部门同步使用上面的 Gateway Inner 接口。默认预置 Permission 和 Gateway Admin 两个 OAuth 客户端：
 
 ```text
 Client ID: permission-ui

@@ -48,3 +48,4 @@ h1 { margin: 0; font-size: 26px; letter-spacing: 0; }
   .employee-form, .profile-grid { grid-template-columns: 1fr; }
   .page-header { align-items: flex-start; }
 }
+.full-width { width: 100%; }

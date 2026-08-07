@@ -13,6 +13,8 @@ type Config struct {
 	AllowedOrigins         []string
 	GatewayAccessKey       string
 	GatewaySecretKey       string
+	InnerAccessKey         string
+	InnerSecretKey         string
 	SessionTTL             time.Duration
 	CookieSecure           bool
 	PermissionClientID     string
@@ -30,6 +32,8 @@ func Load() Config {
 		AllowedOrigins:         split(env("PEOPLE_ALLOWED_ORIGINS", "http://localhost:5177,http://127.0.0.1:5177")),
 		GatewayAccessKey:       env("PEOPLE_GATEWAY_ACCESS_KEY", "gwak_gateway_local"),
 		GatewaySecretKey:       env("PEOPLE_GATEWAY_SECRET_KEY", "local-development-gateway-signin-secret-key"),
+		InnerAccessKey:         env("PEOPLE_INNER_ACCESS_KEY", "gwak_permission_local"),
+		InnerSecretKey:         env("PEOPLE_INNER_SECRET_KEY", "local-development-permission-gateway-secret-key"),
 		SessionTTL:             time.Duration(envInt("PEOPLE_SESSION_HOURS", 12)) * time.Hour,
 		CookieSecure:           strings.EqualFold(env("PEOPLE_COOKIE_SECURE", "false"), "true"),
 		PermissionClientID:     env("PEOPLE_PERMISSION_CLIENT_ID", "permission-ui"),

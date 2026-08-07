@@ -31,6 +31,7 @@ export interface EmployeeInput {
 
 export interface Department {
   id: string
+  parentId: string
   code: string
   name: string
   description: string
@@ -38,9 +39,11 @@ export interface Department {
   employeeCount: number
   createdAt: string
   updatedAt: string
+  children?: Department[]
 }
 
 export interface DepartmentInput {
+  parentId: string
   code: string
   name: string
   description: string

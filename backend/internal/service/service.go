@@ -51,6 +51,7 @@ type EmployeeInput struct {
 }
 
 type DepartmentInput struct {
+	ParentID    string `json:"parentId"`
 	Code        string `json:"code"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -168,6 +169,16 @@ func (s *Service) ListEmployees(search string, page, pageSize int) (Page, error)
 	return Page{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
+func (s *Service) GetEmployee(publicID string) (*model.Employee, error) {
+	var employee model.Employee
+	if err := s.store.DB.Where("public_id = ?", strings.TrimSpace(publicID)).First(&employee).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	return &employee, nil
+}
+
 func (s *Service) CreateEmployee(input EmployeeInput) (*model.Employee, error) {
 	normalized, err := normalizeEmployee(input)
 	if err != nil {
@@ -275,11 +286,14 @@ func (s *Service) CreateDepartment(input DepartmentInput) (*model.Department, er
 	} else if exists {
 		return nil, fmt.Errorf("%w: 部门编码或名称已存在", ErrConflict)
 	}
+	if err := s.validateDepartmentParent("", normalized.ParentID); err != nil {
+		return nil, err
+	}
 	id, err := randomToken("dep_", 18)
 	if err != nil {
 		return nil, err
 	}
-	department := model.Department{ID: id, Code: normalized.Code, Name: normalized.Name, Description: normalized.Description, Status: normalized.Status}
+	department := model.Department{ID: id, ParentID: normalized.ParentID, Code: normalized.Code, Name: normalized.Name, Description: normalized.Description, Status: normalized.Status}
 	if err := s.store.DB.Create(&department).Error; err != nil {
 		return nil, err
 	}
@@ -302,9 +316,13 @@ func (s *Service) UpdateDepartment(id string, input DepartmentInput) (*model.Dep
 	} else if exists {
 		return nil, fmt.Errorf("%w: 部门编码或名称已存在", ErrConflict)
 	}
+	if err := s.validateDepartmentParent(department.ID, normalized.ParentID); err != nil {
+		return nil, err
+	}
 	err = s.store.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&department).Updates(map[string]any{
-			"code": normalized.Code, "name": normalized.Name, "description": normalized.Description, "status": normalized.Status,
+			"parent_id": normalized.ParentID, "code": normalized.Code, "name": normalized.Name,
+			"description": normalized.Description, "status": normalized.Status,
 		}).Error; err != nil {
 			return err
 		}
@@ -329,6 +347,13 @@ func (s *Service) DeleteDepartment(id string) error {
 	} else if err != nil {
 		return err
 	}
+	var childCount int64
+	if err := s.store.DB.Model(&model.Department{}).Where("parent_id = ?", id).Count(&childCount).Error; err != nil {
+		return err
+	}
+	if childCount > 0 {
+		return fmt.Errorf("%w: 部门仍有下级部门，不能删除", ErrConflict)
+	}
 	var count int64
 	if err := s.store.DB.Model(&model.Employee{}).Where("department_id = ?", id).Count(&count).Error; err != nil {
 		return err
@@ -337,6 +362,32 @@ func (s *Service) DeleteDepartment(id string) error {
 		return fmt.Errorf("%w: 部门仍有关联员工，不能删除", ErrConflict)
 	}
 	return s.store.DB.Delete(&department).Error
+}
+
+func (s *Service) validateDepartmentParent(departmentID, parentID string) error {
+	parentID = strings.TrimSpace(parentID)
+	if parentID == "" {
+		return nil
+	}
+	if parentID == departmentID {
+		return fmt.Errorf("%w: 部门不能作为自己的上级", ErrInvalid)
+	}
+	visited := map[string]struct{}{departmentID: {}}
+	currentID := parentID
+	for currentID != "" {
+		if _, exists := visited[currentID]; exists {
+			return fmt.Errorf("%w: 部门层级不能形成循环", ErrInvalid)
+		}
+		visited[currentID] = struct{}{}
+		var current model.Department
+		if err := s.store.DB.Select("id", "parent_id").Where("id = ?", currentID).First(&current).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("%w: 上级部门不存在", ErrInvalid)
+		} else if err != nil {
+			return err
+		}
+		currentID = current.ParentID
+	}
+	return nil
 }
 
 func (s *Service) resolveDepartment(role, id string) (*model.Department, error) {
@@ -536,6 +587,7 @@ func normalizeEmployee(input EmployeeInput) (EmployeeInput, error) {
 }
 
 func normalizeDepartment(input DepartmentInput) (DepartmentInput, error) {
+	input.ParentID = strings.TrimSpace(input.ParentID)
 	input.Code = strings.ToLower(strings.TrimSpace(input.Code))
 	input.Name = strings.TrimSpace(input.Name)
 	input.Description = strings.TrimSpace(input.Description)
@@ -543,7 +595,7 @@ func normalizeDepartment(input DepartmentInput) (DepartmentInput, error) {
 	if !departmentCodePattern.MatchString(input.Code) {
 		return input, fmt.Errorf("%w: 部门编码须以字母开头，且只能包含小写字母、数字、下划线或连字符", ErrInvalid)
 	}
-	if input.Name == "" || len(input.Name) > 100 || len(input.Description) > 500 {
+	if input.Name == "" || len(input.Name) > 100 || len(input.ParentID) > 40 || len(input.Description) > 500 {
 		return input, fmt.Errorf("%w: 部门名称或描述格式无效", ErrInvalid)
 	}
 	if input.Status == "" {

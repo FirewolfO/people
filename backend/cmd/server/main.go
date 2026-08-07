@@ -24,5 +24,6 @@ func main() {
 
 	svc := service.New(database, cfg.SessionTTL)
 	verifier := security.NewGatewayVerifier(cfg.GatewayAccessKey, cfg.GatewaySecretKey, 5*time.Minute)
-	api.NewServer(cfg.Address, verifier, svc, cfg.SessionTTL, cfg.CookieSecure).Spin()
+	innerVerifier := security.NewGatewayVerifier(cfg.InnerAccessKey, cfg.InnerSecretKey, 5*time.Minute)
+	api.NewServer(cfg.Address, verifier, innerVerifier, svc, cfg.SessionTTL, cfg.CookieSecure).Spin()
 }

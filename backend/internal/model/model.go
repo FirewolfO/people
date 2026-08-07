@@ -32,6 +32,7 @@ type Employee struct {
 
 type Department struct {
 	ID            string    `json:"id" gorm:"size:40;primaryKey"`
+	ParentID      string    `json:"parentId" gorm:"size:40;index"`
 	Code          string    `json:"code" gorm:"size:32;uniqueIndex;not null"`
 	Name          string    `json:"name" gorm:"size:100;uniqueIndex;not null"`
 	Description   string    `json:"description" gorm:"size:500"`
