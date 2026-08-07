@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Employee, EmployeeInput, Page } from '@/types'
+import type { Department, DepartmentInput, Employee, EmployeeInput, Page } from '@/types'
 
 interface Envelope<T> {
   code: string
@@ -53,6 +53,10 @@ export const peopleApi = {
   createEmployee: (input: EmployeeInput) => mutation<Employee>(() => client.post('/employees', input)),
   updateEmployee: (id: string, input: EmployeeInput) => mutation<Employee>(() => client.put(`/employees/${id}`, input)),
   deleteEmployee: (id: string) => mutation<{ deleted: boolean }>(() => client.delete(`/employees/${id}`)),
+  departments: (params?: { q?: string }) => unwrap<Department[]>(client.get('/departments', { params })),
+  createDepartment: (input: DepartmentInput) => mutation<Department>(() => client.post('/departments', input)),
+  updateDepartment: (id: string, input: DepartmentInput) => mutation<Department>(() => client.put(`/departments/${id}`, input)),
+  deleteDepartment: (id: string) => mutation<{ deleted: boolean }>(() => client.delete(`/departments/${id}`)),
   authorize: (clientId: string, redirectUri: string, state: string) =>
     mutation<{ redirectUrl: string }>(() => client.post('/oauth/authorize', { clientId, redirectUri, state })),
 }

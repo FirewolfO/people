@@ -17,6 +17,7 @@ type Employee struct {
 	DisplayName        string     `json:"displayName" gorm:"size:100;not null"`
 	Email              string     `json:"email" gorm:"size:255"`
 	Phone              string     `json:"phone" gorm:"size:32"`
+	DepartmentID       string     `json:"departmentId" gorm:"size:40;index"`
 	Department         string     `json:"department" gorm:"size:100"`
 	Title              string     `json:"title" gorm:"size:100"`
 	Role               string     `json:"role" gorm:"size:16;not null;default:employee"`
@@ -27,6 +28,17 @@ type Employee struct {
 	LastLoginAt        *time.Time `json:"lastLoginAt"`
 	CreatedAt          time.Time  `json:"createdAt"`
 	UpdatedAt          time.Time  `json:"updatedAt"`
+}
+
+type Department struct {
+	ID            string    `json:"id" gorm:"size:40;primaryKey"`
+	Code          string    `json:"code" gorm:"size:32;uniqueIndex;not null"`
+	Name          string    `json:"name" gorm:"size:100;uniqueIndex;not null"`
+	Description   string    `json:"description" gorm:"size:500"`
+	Status        string    `json:"status" gorm:"size:16;not null;default:enabled;index"`
+	EmployeeCount int64     `json:"employeeCount" gorm:"-"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 type Session struct {

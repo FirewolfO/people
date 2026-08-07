@@ -4,9 +4,10 @@ import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'elem
 import { Delete, Edit, Plus, Search } from '@element-plus/icons-vue'
 import { peopleApi, apiMessage } from '@/api'
 import { auth } from '@/auth'
-import type { Employee, EmployeeInput } from '@/types'
+import type { Department, Employee, EmployeeInput } from '@/types'
 
 const items = ref<Employee[]>([])
+const departments = ref<Department[]>([])
 const total = ref(0)
 const loading = ref(false)
 const query = reactive({ q: '', page: 1, pageSize: 20 })
@@ -14,12 +15,19 @@ const dialogVisible = ref(false)
 const editingID = ref('')
 const saving = ref(false)
 const formRef = ref<FormInstance>()
-const emptyForm = (): EmployeeInput => ({ employeeNo: '', username: '', displayName: '', email: '', phone: '', department: '', title: '', role: 'employee', status: 'enabled' })
+const emptyForm = (): EmployeeInput => ({ employeeNo: '', username: '', displayName: '', email: '', phone: '', departmentId: '', title: '', role: 'employee', status: 'enabled' })
 const form = reactive<EmployeeInput>(emptyForm())
 const rules: FormRules = {
   employeeNo: [{ required: true, message: '请输入工号', trigger: 'blur' }],
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }, { pattern: /^[A-Za-z][A-Za-z0-9_.-]{2,63}$/, message: '用户名格式无效', trigger: 'blur' }],
   displayName: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
+  departmentId: [{
+    validator: (_rule, value, callback) => {
+      if (form.role === 'employee' && !value) callback(new Error('请选择部门'))
+      else callback()
+    },
+    trigger: 'change',
+  }],
 }
 
 async function load() {
@@ -35,6 +43,14 @@ async function load() {
   }
 }
 
+async function loadDepartments() {
+  try {
+    departments.value = await peopleApi.departments()
+  } catch (error) {
+    ElMessage.error(apiMessage(error, '部门列表加载失败'))
+  }
+}
+
 function create() {
   editingID.value = ''
   Object.assign(form, emptyForm())
@@ -43,7 +59,7 @@ function create() {
 
 function edit(item: Employee) {
   editingID.value = item.id
-  Object.assign(form, { employeeNo: item.employeeNo, username: item.username, displayName: item.displayName, email: item.email, phone: item.phone, department: item.department, title: item.title, role: item.role, status: item.status })
+  Object.assign(form, { employeeNo: item.employeeNo, username: item.username, displayName: item.displayName, email: item.email, phone: item.phone, departmentId: item.departmentId, title: item.title, role: item.role, status: item.status })
   dialogVisible.value = true
 }
 
@@ -74,7 +90,10 @@ async function remove(item: Employee) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void loadDepartments()
+})
 </script>
 
 <template>
@@ -104,7 +123,11 @@ onMounted(load)
         <el-form-item label="姓名" prop="displayName"><el-input v-model="form.displayName" /></el-form-item>
         <el-form-item label="邮箱"><el-input v-model="form.email" /></el-form-item>
         <el-form-item label="手机号"><el-input v-model="form.phone" /></el-form-item>
-        <el-form-item label="部门"><el-input v-model="form.department" /></el-form-item>
+        <el-form-item :label="form.role === 'employee' ? '部门' : '部门（可选）'" prop="departmentId">
+          <el-select v-model="form.departmentId" filterable clearable placeholder="选择部门">
+            <el-option v-for="department in departments" :key="department.id" :label="department.name" :value="department.id" :disabled="department.status === 'disabled'" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="职务"><el-input v-model="form.title" /></el-form-item>
         <el-form-item label="角色"><el-select v-model="form.role" :disabled="form.username === 'admin'"><el-option label="员工" value="employee" /><el-option label="管理员" value="admin" /></el-select></el-form-item>
         <el-form-item label="状态"><el-switch v-model="form.status" active-value="enabled" inactive-value="disabled" active-text="启用" inactive-text="停用" :disabled="form.username === 'admin'" /></el-form-item>

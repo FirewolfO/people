@@ -5,6 +5,7 @@ export interface Employee {
   displayName: string
   email: string
   phone: string
+  departmentId: string
   department: string
   title: string
   role: 'admin' | 'employee'
@@ -22,10 +23,28 @@ export interface EmployeeInput {
   displayName: string
   email: string
   phone: string
-  department: string
+  departmentId: string
   title: string
   role: Employee['role']
   status: Employee['status']
+}
+
+export interface Department {
+  id: string
+  code: string
+  name: string
+  description: string
+  status: 'enabled' | 'disabled'
+  employeeCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface DepartmentInput {
+  code: string
+  name: string
+  description: string
+  status: Department['status']
 }
 
 export interface Page<T> {

@@ -42,8 +42,12 @@ func queryValue(t *testing.T, rawURL, key string) string {
 
 func TestNewEmployeeMustSetPasswordBeforeOAuth(t *testing.T) {
 	svc := newTestService(t)
+	department, err := svc.CreateDepartment(DepartmentInput{Code: "engineering", Name: "研发部", Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
 	created, err := svc.CreateEmployee(EmployeeInput{
-		EmployeeNo: "E001", Username: "alice", DisplayName: "Alice", Role: model.RoleEmployee, Status: model.StatusEnabled,
+		EmployeeNo: "E001", Username: "alice", DisplayName: "Alice", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,6 +79,60 @@ func TestNewEmployeeMustSetPasswordBeforeOAuth(t *testing.T) {
 	}
 	if configured.MustChangePassword {
 		t.Fatal("MustChangePassword remained true after password setup")
+	}
+}
+
+func TestEmployeeRequiresManagedDepartment(t *testing.T) {
+	svc := newTestService(t)
+	input := EmployeeInput{EmployeeNo: "E002", Username: "bob", DisplayName: "Bob", Role: model.RoleEmployee, Status: model.StatusEnabled}
+	if _, err := svc.CreateEmployee(input); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("CreateEmployee() without department error = %v, want invalid", err)
+	}
+	input.DepartmentID = "dep_missing"
+	if _, err := svc.CreateEmployee(input); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("CreateEmployee() with unknown department error = %v, want invalid", err)
+	}
+	department, err := svc.CreateDepartment(DepartmentInput{Code: "sales", Name: "销售部", Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.DepartmentID = department.ID
+	created, err := svc.CreateEmployee(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.DepartmentID != department.ID || created.Department != department.Name {
+		t.Fatalf("created employee department = %#v", created)
+	}
+	if err := svc.DeleteDepartment(department.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("DeleteDepartment() referenced error = %v, want conflict", err)
+	}
+	updated, err := svc.UpdateDepartment(department.ID, DepartmentInput{Code: "sales", Name: "全球销售部", Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.EmployeeCount != 1 {
+		t.Fatalf("updated department employee count = %d, want 1", updated.EmployeeCount)
+	}
+	employees, err := svc.ListEmployees("", 1, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(employees.Items) != 2 || employees.Items[0].Department != "全球销售部" {
+		t.Fatalf("employee department was not synchronized: %#v", employees.Items)
+	}
+}
+
+func TestAdminMayHaveNoDepartment(t *testing.T) {
+	svc := newTestService(t)
+	created, err := svc.CreateEmployee(EmployeeInput{
+		EmployeeNo: "A002", Username: "operator", DisplayName: "Operator", Role: model.RoleAdmin, Status: model.StatusEnabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.DepartmentID != "" || created.Department != "" {
+		t.Fatalf("admin department = %#v", created)
 	}
 }
 

@@ -21,6 +21,7 @@ const router = createRouter({
       children: [
         { path: '', redirect: '/employees' },
         { path: 'employees', name: 'employees', component: () => import('@/views/EmployeesView.vue'), meta: { title: '员工管理', admin: true } },
+        { path: 'departments', name: 'departments', component: () => import('@/views/DepartmentsView.vue'), meta: { title: '部门管理', admin: true } },
         { path: 'profile', name: 'profile', component: () => import('@/views/ProfileView.vue'), meta: { title: '个人资料' } },
       ],
     },

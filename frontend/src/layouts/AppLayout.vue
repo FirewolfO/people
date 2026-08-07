@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { User, UserFilled, SwitchButton } from '@element-plus/icons-vue'
+import { OfficeBuilding, User, UserFilled, SwitchButton } from '@element-plus/icons-vue'
 import { auth } from '@/auth'
 import { apiMessage } from '@/api'
 
@@ -27,6 +27,9 @@ async function logout() {
       <nav>
         <RouterLink v-if="auth.state.user?.role === 'admin'" to="/employees" :class="{ active: route.path === '/employees' }">
           <el-icon><UserFilled /></el-icon><span>员工管理</span>
+        </RouterLink>
+        <RouterLink v-if="auth.state.user?.role === 'admin'" to="/departments" :class="{ active: route.path === '/departments' }">
+          <el-icon><OfficeBuilding /></el-icon><span>部门管理</span>
         </RouterLink>
         <RouterLink to="/profile" :class="{ active: route.path === '/profile' }">
           <el-icon><User /></el-icon><span>个人资料</span>

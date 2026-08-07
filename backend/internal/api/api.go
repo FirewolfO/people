@@ -85,6 +85,10 @@ func NewServer(address string, verifier *security.GatewayVerifier, svc *service.
 	api.POST("/employees", a.requireCSRF(), a.createEmployee)
 	api.PUT("/employees/:id", a.requireCSRF(), a.updateEmployee)
 	api.DELETE("/employees/:id", a.requireCSRF(), a.deleteEmployee)
+	api.GET("/departments", a.listDepartments)
+	api.POST("/departments", a.requireCSRF(), a.createDepartment)
+	api.PUT("/departments/:id", a.requireCSRF(), a.updateDepartment)
+	api.DELETE("/departments/:id", a.requireCSRF(), a.deleteDepartment)
 	api.POST("/oauth/authorize", a.requireCSRF(), a.authorize)
 	api.POST("/oauth/token", a.token)
 	api.GET("/oauth/userinfo", a.userinfo)
@@ -205,6 +209,53 @@ func (a *API) deleteEmployee(_ context.Context, c *app.RequestContext) {
 		return
 	}
 	if err := a.service.DeleteEmployee(c.Param("id"), employee.ID); err != nil {
+		handleError(c, err)
+		return
+	}
+	ok(c, utils.H{"deleted": true})
+}
+
+func (a *API) listDepartments(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.adminSession(c); !valid {
+		return
+	}
+	result, err := a.service.ListDepartments(string(c.Query("q")))
+	respond(c, result, err)
+}
+
+func (a *API) createDepartment(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.adminSession(c); !valid {
+		return
+	}
+	var request service.DepartmentInput
+	if !bind(c, &request) {
+		return
+	}
+	result, err := a.service.CreateDepartment(request)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	created(c, result)
+}
+
+func (a *API) updateDepartment(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.adminSession(c); !valid {
+		return
+	}
+	var request service.DepartmentInput
+	if !bind(c, &request) {
+		return
+	}
+	result, err := a.service.UpdateDepartment(c.Param("id"), request)
+	respond(c, result, err)
+}
+
+func (a *API) deleteDepartment(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.adminSession(c); !valid {
+		return
+	}
+	if err := a.service.DeleteDepartment(c.Param("id")); err != nil {
 		handleError(c, err)
 		return
 	}
@@ -379,7 +430,7 @@ func handleError(c *app.RequestContext, err error) {
 	case errors.Is(err, service.ErrForbidden):
 		fail(c, http.StatusForbidden, "FORBIDDEN", detail(err, "无权执行此操作"))
 	case errors.Is(err, service.ErrNotFound):
-		fail(c, http.StatusNotFound, "NOT_FOUND", "员工不存在")
+		fail(c, http.StatusNotFound, "NOT_FOUND", detail(err, "资源不存在"))
 	case errors.Is(err, service.ErrConflict):
 		fail(c, http.StatusConflict, "CONFLICT", detail(err, "数据已存在"))
 	default:

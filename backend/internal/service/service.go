@@ -28,7 +28,10 @@ var (
 	ErrConflict     = errors.New("conflict")
 )
 
-var usernamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{2,63}$`)
+var (
+	usernamePattern       = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{2,63}$`)
+	departmentCodePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+)
 
 type Service struct {
 	store      *store.Store
@@ -36,14 +39,21 @@ type Service struct {
 }
 
 type EmployeeInput struct {
-	EmployeeNo  string `json:"employeeNo"`
-	Username    string `json:"username"`
-	DisplayName string `json:"displayName"`
-	Email       string `json:"email"`
-	Phone       string `json:"phone"`
-	Department  string `json:"department"`
-	Title       string `json:"title"`
-	Role        string `json:"role"`
+	EmployeeNo   string `json:"employeeNo"`
+	Username     string `json:"username"`
+	DisplayName  string `json:"displayName"`
+	Email        string `json:"email"`
+	Phone        string `json:"phone"`
+	DepartmentID string `json:"departmentId"`
+	Title        string `json:"title"`
+	Role         string `json:"role"`
+	Status       string `json:"status"`
+}
+
+type DepartmentInput struct {
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 	Status      string `json:"status"`
 }
 
@@ -163,6 +173,10 @@ func (s *Service) CreateEmployee(input EmployeeInput) (*model.Employee, error) {
 	if err != nil {
 		return nil, err
 	}
+	department, err := s.resolveDepartment(normalized.Role, normalized.DepartmentID)
+	if err != nil {
+		return nil, err
+	}
 	var count int64
 	if err := s.store.DB.Model(&model.Employee{}).Where("employee_no = ? OR LOWER(username) = ?", normalized.EmployeeNo, strings.ToLower(normalized.Username)).Count(&count).Error; err != nil {
 		return nil, err
@@ -177,8 +191,12 @@ func (s *Service) CreateEmployee(input EmployeeInput) (*model.Employee, error) {
 	employee := model.Employee{
 		PublicID: publicID, EmployeeNo: normalized.EmployeeNo, Username: normalized.Username,
 		DisplayName: normalized.DisplayName, Email: normalized.Email, Phone: normalized.Phone,
-		Department: normalized.Department, Title: normalized.Title, Role: normalized.Role,
+		Title: normalized.Title, Role: normalized.Role,
 		Status: normalized.Status, MustChangePassword: true,
+	}
+	if department != nil {
+		employee.DepartmentID = department.ID
+		employee.Department = department.Name
 	}
 	if err := s.store.DB.Create(&employee).Error; err != nil {
 		return nil, err
@@ -193,7 +211,16 @@ func (s *Service) UpdateEmployee(publicID string, input EmployeeInput) (*model.E
 	} else if err != nil {
 		return nil, err
 	}
+	if employee.Username == "admin" {
+		input.Username = "admin"
+		input.Role = model.RoleAdmin
+		input.Status = model.StatusEnabled
+	}
 	normalized, err := normalizeEmployee(input)
+	if err != nil {
+		return nil, err
+	}
+	department, err := s.resolveDepartment(normalized.Role, normalized.DepartmentID)
 	if err != nil {
 		return nil, err
 	}
@@ -204,19 +231,140 @@ func (s *Service) UpdateEmployee(publicID string, input EmployeeInput) (*model.E
 	if count > 0 {
 		return nil, fmt.Errorf("%w: 工号或用户名已存在", ErrConflict)
 	}
-	if employee.Username == "admin" {
-		normalized.Username = "admin"
-		normalized.Role = model.RoleAdmin
-		normalized.Status = model.StatusEnabled
+	departmentID, departmentName := "", ""
+	if department != nil {
+		departmentID, departmentName = department.ID, department.Name
 	}
 	if err := s.store.DB.Model(&employee).Updates(map[string]any{
 		"employee_no": normalized.EmployeeNo, "username": normalized.Username,
 		"display_name": normalized.DisplayName, "email": normalized.Email, "phone": normalized.Phone,
-		"department": normalized.Department, "title": normalized.Title, "role": normalized.Role, "status": normalized.Status,
+		"department_id": departmentID, "department": departmentName,
+		"title": normalized.Title, "role": normalized.Role, "status": normalized.Status,
 	}).Error; err != nil {
 		return nil, err
 	}
 	return &employee, s.store.DB.Where("id = ?", employee.ID).First(&employee).Error
+}
+
+func (s *Service) ListDepartments(search string) ([]model.Department, error) {
+	query := s.store.DB.Model(&model.Department{})
+	if value := strings.TrimSpace(search); value != "" {
+		like := "%" + value + "%"
+		query = query.Where("code LIKE ? OR name LIKE ?", like, like)
+	}
+	var departments []model.Department
+	if err := query.Order("CASE WHEN status = 'enabled' THEN 0 ELSE 1 END, name ASC").Find(&departments).Error; err != nil {
+		return nil, err
+	}
+	for index := range departments {
+		if err := s.store.DB.Model(&model.Employee{}).Where("department_id = ?", departments[index].ID).
+			Count(&departments[index].EmployeeCount).Error; err != nil {
+			return nil, err
+		}
+	}
+	return departments, nil
+}
+
+func (s *Service) CreateDepartment(input DepartmentInput) (*model.Department, error) {
+	normalized, err := normalizeDepartment(input)
+	if err != nil {
+		return nil, err
+	}
+	if exists, err := s.departmentExists(normalized.Code, normalized.Name, ""); err != nil {
+		return nil, err
+	} else if exists {
+		return nil, fmt.Errorf("%w: 部门编码或名称已存在", ErrConflict)
+	}
+	id, err := randomToken("dep_", 18)
+	if err != nil {
+		return nil, err
+	}
+	department := model.Department{ID: id, Code: normalized.Code, Name: normalized.Name, Description: normalized.Description, Status: normalized.Status}
+	if err := s.store.DB.Create(&department).Error; err != nil {
+		return nil, err
+	}
+	return &department, nil
+}
+
+func (s *Service) UpdateDepartment(id string, input DepartmentInput) (*model.Department, error) {
+	var department model.Department
+	if err := s.store.DB.Where("id = ?", id).First(&department).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("%w: 部门不存在", ErrNotFound)
+	} else if err != nil {
+		return nil, err
+	}
+	normalized, err := normalizeDepartment(input)
+	if err != nil {
+		return nil, err
+	}
+	if exists, err := s.departmentExists(normalized.Code, normalized.Name, department.ID); err != nil {
+		return nil, err
+	} else if exists {
+		return nil, fmt.Errorf("%w: 部门编码或名称已存在", ErrConflict)
+	}
+	err = s.store.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&department).Updates(map[string]any{
+			"code": normalized.Code, "name": normalized.Name, "description": normalized.Description, "status": normalized.Status,
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Employee{}).Where("department_id = ?", department.ID).Update("department", normalized.Name).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.store.DB.Where("id = ?", department.ID).First(&department).Error; err != nil {
+		return nil, err
+	}
+	if err := s.store.DB.Model(&model.Employee{}).Where("department_id = ?", department.ID).Count(&department.EmployeeCount).Error; err != nil {
+		return nil, err
+	}
+	return &department, nil
+}
+
+func (s *Service) DeleteDepartment(id string) error {
+	var department model.Department
+	if err := s.store.DB.Where("id = ?", id).First(&department).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("%w: 部门不存在", ErrNotFound)
+	} else if err != nil {
+		return err
+	}
+	var count int64
+	if err := s.store.DB.Model(&model.Employee{}).Where("department_id = ?", id).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return fmt.Errorf("%w: 部门仍有关联员工，不能删除", ErrConflict)
+	}
+	return s.store.DB.Delete(&department).Error
+}
+
+func (s *Service) resolveDepartment(role, id string) (*model.Department, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		if role == model.RoleEmployee {
+			return nil, fmt.Errorf("%w: 非管理员员工必须选择部门", ErrInvalid)
+		}
+		return nil, nil
+	}
+	var department model.Department
+	if err := s.store.DB.Where("id = ? AND status = ?", id, model.StatusEnabled).First(&department).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: 部门不存在或已停用", ErrInvalid)
+		}
+		return nil, err
+	}
+	return &department, nil
+}
+
+func (s *Service) departmentExists(code, name, excludeID string) (bool, error) {
+	query := s.store.DB.Model(&model.Department{}).Where("(LOWER(code) = ? OR LOWER(name) = ?)", strings.ToLower(code), strings.ToLower(name))
+	if excludeID != "" {
+		query = query.Where("id <> ?", excludeID)
+	}
+	var count int64
+	err := query.Count(&count).Error
+	return count > 0, err
 }
 
 func (s *Service) DeleteEmployee(publicID string, actorID uint) error {
@@ -362,7 +510,7 @@ func normalizeEmployee(input EmployeeInput) (EmployeeInput, error) {
 	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	input.Phone = strings.TrimSpace(input.Phone)
-	input.Department = strings.TrimSpace(input.Department)
+	input.DepartmentID = strings.TrimSpace(input.DepartmentID)
 	input.Title = strings.TrimSpace(input.Title)
 	input.Role = strings.ToLower(strings.TrimSpace(input.Role))
 	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
@@ -381,8 +529,28 @@ func normalizeEmployee(input EmployeeInput) (EmployeeInput, error) {
 	if input.Status != model.StatusEnabled && input.Status != model.StatusDisabled {
 		return input, fmt.Errorf("%w: 状态无效", ErrInvalid)
 	}
-	if len(input.Email) > 255 || len(input.Phone) > 32 || len(input.Department) > 100 || len(input.Title) > 100 {
+	if len(input.Email) > 255 || len(input.Phone) > 32 || len(input.DepartmentID) > 40 || len(input.Title) > 100 {
 		return input, fmt.Errorf("%w: 员工资料过长", ErrInvalid)
+	}
+	return input, nil
+}
+
+func normalizeDepartment(input DepartmentInput) (DepartmentInput, error) {
+	input.Code = strings.ToLower(strings.TrimSpace(input.Code))
+	input.Name = strings.TrimSpace(input.Name)
+	input.Description = strings.TrimSpace(input.Description)
+	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
+	if !departmentCodePattern.MatchString(input.Code) {
+		return input, fmt.Errorf("%w: 部门编码须以字母开头，且只能包含小写字母、数字、下划线或连字符", ErrInvalid)
+	}
+	if input.Name == "" || len(input.Name) > 100 || len(input.Description) > 500 {
+		return input, fmt.Errorf("%w: 部门名称或描述格式无效", ErrInvalid)
+	}
+	if input.Status == "" {
+		input.Status = model.StatusEnabled
+	}
+	if input.Status != model.StatusEnabled && input.Status != model.StatusDisabled {
+		return input, fmt.Errorf("%w: 部门状态无效", ErrInvalid)
 	}
 	return input, nil
 }

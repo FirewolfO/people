@@ -33,7 +33,10 @@ func Open(dsn, permissionClientID, permissionClientSecret string, redirectURIs [
 	if err := db.Exec("PRAGMA foreign_keys = ON").Error; err != nil {
 		return nil, err
 	}
-	if err := db.AutoMigrate(&model.Employee{}, &model.Session{}, &model.OAuthClient{}, &model.OAuthCode{}, &model.OAuthToken{}); err != nil {
+	if err := db.AutoMigrate(&model.Department{}, &model.Employee{}, &model.Session{}, &model.OAuthClient{}, &model.OAuthCode{}, &model.OAuthToken{}); err != nil {
+		return nil, err
+	}
+	if err := migrateLegacyDepartments(db); err != nil {
 		return nil, err
 	}
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte("admin"), 12)
@@ -72,6 +75,37 @@ func Open(dsn, permissionClientID, permissionClientSecret string, redirectURIs [
 		}
 	}
 	return &Store{DB: db}, nil
+}
+
+func migrateLegacyDepartments(db *gorm.DB) error {
+	var names []string
+	if err := db.Model(&model.Employee{}).
+		Where("department <> '' AND (department_id = '' OR department_id IS NULL)").
+		Distinct("department").Pluck("department", &names).Error; err != nil {
+		return err
+	}
+	for _, rawName := range names {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			continue
+		}
+		suffix := hash(strings.ToLower(name))[:12]
+		department := model.Department{
+			ID: "dep_" + suffix, Code: "legacy_" + suffix, Name: name, Status: model.StatusEnabled,
+		}
+		if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&department).Error; err != nil {
+			return err
+		}
+		if err := db.Where("name = ?", name).First(&department).Error; err != nil {
+			return err
+		}
+		if err := db.Model(&model.Employee{}).
+			Where("department = ? AND (department_id = '' OR department_id IS NULL)", rawName).
+			Updates(map[string]any{"department_id": department.ID, "department": department.Name}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error {
