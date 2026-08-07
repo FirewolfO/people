@@ -35,12 +35,18 @@ async function logout() {
           <el-icon><User /></el-icon><span>个人资料</span>
         </RouterLink>
       </nav>
-      <button class="account-row" type="button" @click="logout">
-        <span class="avatar">{{ displayName.slice(0, 1).toUpperCase() }}</span>
-        <span class="account-copy"><strong>{{ displayName }}</strong><small>{{ auth.state.user?.employeeNo }}</small></span>
-        <el-icon><SwitchButton /></el-icon>
-      </button>
     </aside>
-    <main class="main"><RouterView /></main>
+    <main class="main">
+      <header class="app-header">
+        <div class="account-summary">
+          <span class="avatar">{{ displayName.slice(0, 1).toUpperCase() }}</span>
+          <span class="account-copy"><strong>{{ displayName }}</strong><small>{{ auth.state.user?.employeeNo }}</small></span>
+        </div>
+        <el-tooltip content="退出登录" placement="bottom">
+          <el-button class="logout-button" :icon="SwitchButton" circle aria-label="退出登录" @click="logout" />
+        </el-tooltip>
+      </header>
+      <RouterView />
+    </main>
   </div>
 </template>
