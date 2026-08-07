@@ -23,12 +23,16 @@ People 是企业内部员工信息系统，账号体系与 Sign-in 完全隔离�
 
 ## OAuth
 
-People 提供 OAuth 2.0 授权码模式供内部系统登录，并提供客户端凭证模式供可信后端同步员工目录。默认预置 Permission 客户端：
+People 提供 OAuth 2.0 授权码模式供内部系统登录，并提供客户端凭证模式供可信后端同步员工目录。默认预置 Permission 和 Gateway Admin 两个客户端：
 
 ```text
 Client ID: permission-ui
 Client Secret: permission-local-client-secret-change-me
-Redirect URI: http://localhost:5173/oauth/callback
+Redirect URI: Permission 独立控制台和 admin-ui 的 /oauth/callback
+
+Client ID: gateway-admin-ui
+Client Secret: gateway-admin-local-client-secret-change-me
+Redirect URI: Gateway 独立控制台的 /oauth/callback
 ```
 
 生产环境必须通过环境变量替换 Client Secret，并配置准确的回调地址。

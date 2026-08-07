@@ -17,7 +17,15 @@ type Store struct {
 	DB *gorm.DB
 }
 
-func Open(dsn, permissionClientID, permissionClientSecret string, redirectURIs []string) (*Store, error) {
+type OAuthClientSeed struct {
+	ClientID      string
+	Name          string
+	ClientSecret  string
+	RedirectURIs  []string
+	AllowedScopes []string
+}
+
+func Open(dsn, permissionClientID, permissionClientSecret string, redirectURIs []string, additionalClients ...OAuthClientSeed) (*Store, error) {
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return nil, err
@@ -47,15 +55,21 @@ func Open(dsn, permissionClientID, permissionClientSecret string, redirectURIs [
 			return nil, err
 		}
 	}
-	client := model.OAuthClient{
-		ClientID: permissionClientID, Name: "权限系统", SecretHash: hash(permissionClientSecret),
-		RedirectURIs: strings.Join(redirectURIs, "\n"), AllowedScopes: "openid profile employees.read",
-	}
-	if err := db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "client_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"name", "secret_hash", "redirect_uris", "allowed_scopes", "updated_at"}),
-	}).Create(&client).Error; err != nil {
-		return nil, err
+	clients := append([]OAuthClientSeed{{
+		ClientID: permissionClientID, Name: "权限系统", ClientSecret: permissionClientSecret,
+		RedirectURIs: redirectURIs, AllowedScopes: []string{"openid", "profile", "employees.read"},
+	}}, additionalClients...)
+	for _, seed := range clients {
+		client := model.OAuthClient{
+			ClientID: seed.ClientID, Name: seed.Name, SecretHash: hash(seed.ClientSecret),
+			RedirectURIs: strings.Join(seed.RedirectURIs, "\n"), AllowedScopes: strings.Join(seed.AllowedScopes, " "),
+		}
+		if err := db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "client_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"name", "secret_hash", "redirect_uris", "allowed_scopes", "updated_at"}),
+		}).Create(&client).Error; err != nil {
+			return nil, err
+		}
 	}
 	return &Store{DB: db}, nil
 }

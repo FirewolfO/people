@@ -18,6 +18,9 @@ type Config struct {
 	PermissionClientID     string
 	PermissionClientSecret string
 	PermissionRedirectURIs []string
+	GatewayClientID        string
+	GatewayClientSecret    string
+	GatewayRedirectURIs    []string
 }
 
 func Load() Config {
@@ -31,7 +34,10 @@ func Load() Config {
 		CookieSecure:           strings.EqualFold(env("PEOPLE_COOKIE_SECURE", "false"), "true"),
 		PermissionClientID:     env("PEOPLE_PERMISSION_CLIENT_ID", "permission-ui"),
 		PermissionClientSecret: env("PEOPLE_PERMISSION_CLIENT_SECRET", "permission-local-client-secret-change-me"),
-		PermissionRedirectURIs: split(env("PEOPLE_PERMISSION_REDIRECT_URIS", "http://localhost:5173/oauth/callback,http://127.0.0.1:5173/oauth/callback")),
+		PermissionRedirectURIs: split(env("PEOPLE_PERMISSION_REDIRECT_URIS", "http://localhost:5173/oauth/callback,http://127.0.0.1:5173/oauth/callback,http://localhost:5174/oauth/callback,http://127.0.0.1:5174/oauth/callback,http://localhost:5178/oauth/callback,http://127.0.0.1:5178/oauth/callback")),
+		GatewayClientID:        env("PEOPLE_GATEWAY_CLIENT_ID", "gateway-admin-ui"),
+		GatewayClientSecret:    env("PEOPLE_GATEWAY_CLIENT_SECRET", "gateway-admin-local-client-secret-change-me"),
+		GatewayRedirectURIs:    split(env("PEOPLE_GATEWAY_REDIRECT_URIS", "http://localhost:5175/oauth/callback,http://127.0.0.1:5175/oauth/callback")),
 	}
 }
 
