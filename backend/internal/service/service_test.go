@@ -174,3 +174,67 @@ func TestOAuthRequiresClientSecretAndConsumesCode(t *testing.T) {
 		t.Fatalf("ClientCredentials() without secret error = %v, want unauthorized", err)
 	}
 }
+
+func TestOAuthAccountSwitchDoesNotReplacePeopleSession(t *testing.T) {
+	svc := newTestService(t)
+	department, err := svc.CreateDepartment(DepartmentInput{Code: "engineering", Name: "研发部", Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, err := svc.CreateEmployee(EmployeeInput{
+		EmployeeNo: "E003", Username: "alice", DisplayName: "Alice", DepartmentID: department.ID,
+		Role: model.RoleEmployee, Status: model.StatusEnabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, setupToken, err := svc.Login("alice", "initial setup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, setupSession, err := svc.AuthenticateSession(setupToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ChangePassword(alice, setupSession.ID, "", "alice-password-123"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, adminToken, err := svc.Login("admin", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sessionsBefore int64
+	if err := svc.store.DB.Model(&model.Session{}).Count(&sessionsBefore).Error; err != nil {
+		t.Fatal(err)
+	}
+	selected, err := svc.AuthenticateOAuthAccount("alice", "alice-password-123")
+	if err != nil {
+		t.Fatalf("AuthenticateOAuthAccount() error = %v", err)
+	}
+	redirect, err := svc.Authorize(selected, testClientID, testRedirectURI, "switched-state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := svc.AuthenticateSession(adminToken)
+	if err != nil || current.Username != "admin" {
+		t.Fatalf("original People session = %#v, %v", current, err)
+	}
+	var sessionsAfter int64
+	if err := svc.store.DB.Model(&model.Session{}).Count(&sessionsAfter).Error; err != nil {
+		t.Fatal(err)
+	}
+	if sessionsAfter != sessionsBefore {
+		t.Fatalf("session count after OAuth account switch = %d, want %d", sessionsAfter, sessionsBefore)
+	}
+	result, err := svc.ExchangeCode(testClientID, testClientSecret, queryValue(t, redirect, "code"), testRedirectURI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.User == nil || result.User.Username != "alice" {
+		t.Fatalf("switched OAuth identity = %#v", result.User)
+	}
+	if _, err := svc.AuthenticateOAuthAccount("alice", "wrong-password"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("wrong switched account password error = %v, want unauthorized", err)
+	}
+}

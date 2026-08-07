@@ -57,6 +57,8 @@ type authorizeRequest struct {
 	ClientID    string `json:"clientId"`
 	RedirectURI string `json:"redirectUri"`
 	State       string `json:"state"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
 }
 
 type tokenRequest struct {
@@ -291,6 +293,18 @@ func (a *API) authorize(_ context.Context, c *app.RequestContext) {
 	var request authorizeRequest
 	if !bind(c, &request) {
 		return
+	}
+	if strings.TrimSpace(request.Username) != "" || request.Password != "" {
+		if strings.TrimSpace(request.Username) == "" || request.Password == "" {
+			handleError(c, fmt.Errorf("%w: 切换账号时用户名和密码不能为空", service.ErrInvalid))
+			return
+		}
+		var err error
+		employee, err = a.service.AuthenticateOAuthAccount(request.Username, request.Password)
+		if err != nil {
+			handleError(c, err)
+			return
+		}
 	}
 	redirectURL, err := a.service.Authorize(employee, request.ClientID, request.RedirectURI, request.State)
 	if err != nil {

@@ -39,6 +39,8 @@ People 后端对应的上游路径为 `/api/v1/inner/directory/**`，只接受 `
 
 People 提供 OAuth 2.0 授权码模式供内部系统登录。Permission 的员工与部门同步使用上面的 Gateway Inner 接口。默认预置 Permission 和 Gateway Admin 两个 OAuth 客户端：
 
+用户进入 OAuth 授权页后必须明确点击授权，不会因已有 People 登录态而自动跳转。授权页支持临时切换其他 People 账号：切换时只校验该账号并为本次 OAuth 签发授权码，不创建或替换 People 浏览器会话，返回 People 后仍保持原登录身份。
+
 ```text
 Client ID: permission-ui
 Client Secret: permission-local-client-secret-change-me

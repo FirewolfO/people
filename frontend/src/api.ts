@@ -57,8 +57,8 @@ export const peopleApi = {
   createDepartment: (input: DepartmentInput) => mutation<Department>(() => client.post('/departments', input)),
   updateDepartment: (id: string, input: DepartmentInput) => mutation<Department>(() => client.put(`/departments/${id}`, input)),
   deleteDepartment: (id: string) => mutation<{ deleted: boolean }>(() => client.delete(`/departments/${id}`)),
-  authorize: (clientId: string, redirectUri: string, state: string) =>
-    mutation<{ redirectUrl: string }>(() => client.post('/oauth/authorize', { clientId, redirectUri, state })),
+  authorize: (clientId: string, redirectUri: string, state: string, account?: { username: string; password: string }) =>
+    mutation<{ redirectUrl: string }>(() => client.post('/oauth/authorize', { clientId, redirectUri, state, ...account })),
 }
 
 export function apiMessage(error: unknown, fallback = '请求失败') {

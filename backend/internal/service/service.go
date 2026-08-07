@@ -106,6 +106,22 @@ func (s *Service) Login(username, password string) (*model.Employee, string, err
 	return &employee, token, nil
 }
 
+// AuthenticateOAuthAccount verifies an account for one authorization request
+// without creating or replacing a People browser session.
+func (s *Service) AuthenticateOAuthAccount(username, password string) (*model.Employee, error) {
+	var employee model.Employee
+	if err := s.store.DB.Where("LOWER(username) = ?", strings.ToLower(strings.TrimSpace(username))).First(&employee).Error; err != nil {
+		return nil, ErrUnauthorized
+	}
+	if employee.Status != model.StatusEnabled || employee.MustChangePassword || employee.PasswordHash == "" {
+		return nil, ErrUnauthorized
+	}
+	if bcrypt.CompareHashAndPassword([]byte(employee.PasswordHash), []byte(password)) != nil {
+		return nil, ErrUnauthorized
+	}
+	return &employee, nil
+}
+
 func (s *Service) AuthenticateSession(token string) (*model.Employee, *model.Session, error) {
 	if token == "" {
 		return nil, nil, ErrUnauthorized

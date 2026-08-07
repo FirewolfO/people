@@ -37,6 +37,23 @@ h1 { margin: 0; font-size: 26px; letter-spacing: 0; }
 .auth-brand { padding: 0; color: #173d32; }
 .auth-panel h1 { margin: 28px 0 26px; font-size: 24px; }
 .auth-panel .el-button { width: 100%; margin-top: 8px; }
+.oauth-panel { width: min(500px, 100%); }
+.oauth-heading { margin: 28px 0 24px; }
+.oauth-heading p { margin: 0 0 8px; color: #28734e; font-size: 13px; font-weight: 700; }
+.oauth-heading h1 { margin: 0 0 10px; }
+.oauth-heading span { color: #68736f; }
+.oauth-account { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 16px 0; border-top: 1px solid #e4e8e6; border-bottom: 1px solid #e4e8e6; }
+.oauth-account .avatar { width: 42px; height: 42px; }
+.oauth-account-copy { display: grid; min-width: 0; }
+.oauth-account-copy strong, .oauth-account-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oauth-account-copy small { margin-top: 3px; color: #68736f; }
+.oauth-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 10px; margin-top: 24px; }
+.oauth-actions .el-button { width: 100%; margin: 0; }
+.oauth-actions .el-button + .el-button { margin-left: 0; }
+.oauth-switch-button.el-button { display: flex; width: auto; margin: 18px auto 0; }
+.oauth-switch-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; padding-top: 18px; border-top: 1px solid #e4e8e6; }
+.oauth-switch-heading .el-button { width: auto; margin: 0; }
+.oauth-note { margin: -2px 0 0; color: #68736f; font-size: 13px; line-height: 1.6; }
 .status-page { display: grid; place-items: center; min-height: 100vh; background: #f4f6f5; }
 @media (max-width: 760px) {
   .app-shell { grid-template-columns: 1fr; padding-bottom: 70px; }
@@ -46,6 +63,9 @@ h1 { margin: 0; font-size: 26px; letter-spacing: 0; }
   nav a { flex: 1; justify-content: center; min-height: 48px; }
   .app-header { height: 58px; padding: 0 16px; }
   .account-summary .account-copy { display: none; }
+  .oauth-account { grid-template-columns: 42px minmax(0, 1fr); }
+  .oauth-account .el-tag { grid-column: 2; justify-self: start; }
+  .oauth-actions { grid-template-columns: 1fr; }
   .page { min-height: calc(100vh - 128px); padding: 22px 16px; }
   .employee-form, .profile-grid { grid-template-columns: 1fr; }
   .page-header { align-items: flex-start; }
