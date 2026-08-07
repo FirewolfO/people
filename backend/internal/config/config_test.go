@@ -1,0 +1,23 @@
+package config
+
+import "testing"
+
+func TestDefaultOAuthRedirectURIsIncludeNetworkFrontends(t *testing.T) {
+	t.Setenv("PEOPLE_PERMISSION_REDIRECT_URIS", "")
+	t.Setenv("PEOPLE_GATEWAY_REDIRECT_URIS", "")
+
+	configured := Load()
+	assertContains(t, configured.PermissionRedirectURIs, "http://10.251.237.216:5174/oauth/callback")
+	assertContains(t, configured.PermissionRedirectURIs, "http://10.251.237.216:5178/oauth/callback")
+	assertContains(t, configured.GatewayRedirectURIs, "http://10.251.237.216:5175/oauth/callback")
+}
+
+func assertContains(t *testing.T, values []string, expected string) {
+	t.Helper()
+	for _, value := range values {
+		if value == expected {
+			return
+		}
+	}
+	t.Fatalf("%q is not configured in %v", expected, values)
+}
