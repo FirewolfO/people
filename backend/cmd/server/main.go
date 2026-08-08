@@ -16,6 +16,9 @@ func main() {
 	database, err := store.Open(cfg.DatabaseDSN, cfg.PermissionClientID, cfg.PermissionClientSecret, cfg.PermissionRedirectURIs, store.OAuthClientSeed{
 		ClientID: cfg.GatewayClientID, Name: "Gateway 管理系统", ClientSecret: cfg.GatewayClientSecret,
 		RedirectURIs: cfg.GatewayRedirectURIs, AllowedScopes: []string{"openid", "profile"},
+	}, store.OAuthClientSeed{
+		ClientID: cfg.BlogClientID, Name: "内部博客", ClientSecret: cfg.BlogClientSecret,
+		RedirectURIs: cfg.BlogRedirectURIs, AllowedScopes: []string{"openid", "profile"},
 	})
 	if err != nil {
 		log.Fatalf("open people database: %v", err)

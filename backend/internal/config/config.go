@@ -23,6 +23,9 @@ type Config struct {
 	GatewayClientID        string
 	GatewayClientSecret    string
 	GatewayRedirectURIs    []string
+	BlogClientID           string
+	BlogClientSecret       string
+	BlogRedirectURIs       []string
 }
 
 func Load() Config {
@@ -42,6 +45,9 @@ func Load() Config {
 		GatewayClientID:        env("PEOPLE_GATEWAY_CLIENT_ID", "gateway-admin-ui"),
 		GatewayClientSecret:    env("PEOPLE_GATEWAY_CLIENT_SECRET", "gateway-admin-local-client-secret-change-me"),
 		GatewayRedirectURIs:    split(env("PEOPLE_GATEWAY_REDIRECT_URIS", "http://localhost:5175/oauth/callback,http://127.0.0.1:5175/oauth/callback,http://10.251.237.216:5175/oauth/callback")),
+		BlogClientID:           env("PEOPLE_BLOG_CLIENT_ID", "blog-ui"),
+		BlogClientSecret:       env("PEOPLE_BLOG_CLIENT_SECRET", "blog-local-client-secret-change-me"),
+		BlogRedirectURIs:       split(env("PEOPLE_BLOG_REDIRECT_URIS", "http://localhost:5179/oauth/callback,http://127.0.0.1:5179/oauth/callback,http://10.251.237.216:5179/oauth/callback")),
 	}
 }
 
