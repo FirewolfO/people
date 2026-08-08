@@ -18,7 +18,7 @@ async function submit() {
   loading.value = true
   try {
     await auth.login(form.username, form.password)
-    const fallback = auth.state.user?.role === 'admin' ? '/employees' : '/profile'
+    const fallback = auth.can('people.dashboard:view') ? '/dashboard' : '/departures'
     await router.replace(auth.state.user?.mustChangePassword ? { name: 'change-password', query: route.query } : String(route.query.redirect || fallback))
   } catch (error) {
     ElMessage.error(apiMessage(error, '用户名或密码错误'))

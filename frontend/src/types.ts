@@ -1,6 +1,9 @@
+export type EmployeeStatus = 'enabled' | 'disabled'
+export type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'intern'
+
 export interface Employee {
   id: string
-  employeeNo: string
+  employeeNo: number
   username: string
   displayName: string
   email: string
@@ -8,8 +11,13 @@ export interface Employee {
   departmentId: string
   department: string
   title: string
+  employmentType: EmploymentType
+  hireDate: string
+  probationEndDate: string
+  workLocation: string
   role: 'admin' | 'employee'
-  status: 'enabled' | 'disabled'
+  status: EmployeeStatus
+  permissions: string[]
   mustChangePassword: boolean
   passwordChangedAt?: string | null
   lastLoginAt?: string | null
@@ -18,15 +26,16 @@ export interface Employee {
 }
 
 export interface EmployeeInput {
-  employeeNo: string
   username: string
   displayName: string
   email: string
   phone: string
   departmentId: string
   title: string
-  role: Employee['role']
-  status: Employee['status']
+  employmentType: EmploymentType
+  hireDate: string
+  probationEndDate: string
+  workLocation: string
 }
 
 export interface Department {
@@ -35,7 +44,9 @@ export interface Department {
   code: string
   name: string
   description: string
-  status: 'enabled' | 'disabled'
+  leaderId: string
+  leaderName: string
+  status: EmployeeStatus
   employeeCount: number
   createdAt: string
   updatedAt: string
@@ -47,7 +58,63 @@ export interface DepartmentInput {
   code: string
   name: string
   description: string
-  status: Department['status']
+  leaderId: string
+  status: EmployeeStatus
+}
+
+export type DepartureStatus = 'pending_manager' | 'pending_hr' | 'approved' | 'rejected' | 'cancelled'
+
+export interface DepartureRequest {
+  id: string
+  employeeId: string
+  employeeName: string
+  employeeNo: number
+  departmentId: string
+  departmentName: string
+  departmentLeaderId: string
+  reason: string
+  lastWorkingDate: string
+  status: DepartureStatus
+  managerReviewerId: string
+  managerReviewerName: string
+  managerReviewComment: string
+  managerReviewedAt?: string | null
+  hrReviewerId: string
+  hrReviewerName: string
+  hrReviewComment: string
+  hrReviewedAt?: string | null
+  canManagerReview: boolean
+  canHrReview: boolean
+  canCancel: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface NotificationItem {
+  id: string
+  type: string
+  title: string
+  content: string
+  resourceType: string
+  resourceId: string
+  readAt?: string | null
+  createdAt: string
+}
+
+export interface NotificationSummary {
+  unread: number
+  pendingTasks: number
+  total: number
+}
+
+export interface HRDashboard {
+  totalEmployees: number
+  enabledEmployees: number
+  disabledEmployees: number
+  departments: number
+  pendingDepartures: number
+  probationEmployees: number
+  recentHires: number
 }
 
 export interface Page<T> {

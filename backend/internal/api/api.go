@@ -53,6 +53,10 @@ type passwordRequest struct {
 	NewPassword     string `json:"newPassword"`
 }
 
+type enabledRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
 type authorizeRequest struct {
 	ClientID    string `json:"clientId"`
 	RedirectURI string `json:"redirectUri"`
@@ -87,10 +91,22 @@ func NewServer(address string, verifier, innerVerifier *security.GatewayVerifier
 	api.POST("/employees", a.requireCSRF(), a.createEmployee)
 	api.PUT("/employees/:id", a.requireCSRF(), a.updateEmployee)
 	api.DELETE("/employees/:id", a.requireCSRF(), a.deleteEmployee)
+	api.POST("/employees/:id/reset-password", a.requireCSRF(), a.resetEmployeePassword)
+	api.PUT("/employees/:id/enabled", a.requireCSRF(), a.setEmployeeEnabled)
 	api.GET("/departments", a.listDepartments)
 	api.POST("/departments", a.requireCSRF(), a.createDepartment)
 	api.PUT("/departments/:id", a.requireCSRF(), a.updateDepartment)
 	api.DELETE("/departments/:id", a.requireCSRF(), a.deleteDepartment)
+	api.GET("/hr/dashboard", a.hrDashboard)
+	api.GET("/departures", a.listDepartures)
+	api.POST("/departures", a.requireCSRF(), a.createDeparture)
+	api.POST("/departures/:id/manager-review", a.requireCSRF(), a.reviewDeparture("manager"))
+	api.POST("/departures/:id/hr-review", a.requireCSRF(), a.reviewDeparture("hr"))
+	api.POST("/departures/:id/cancel", a.requireCSRF(), a.cancelDeparture)
+	api.GET("/notifications", a.listNotifications)
+	api.GET("/notifications/summary", a.notificationSummary)
+	api.POST("/notifications/:id/read", a.requireCSRF(), a.markNotificationRead)
+	api.POST("/notifications/read-all", a.requireCSRF(), a.markAllNotificationsRead)
 	api.POST("/oauth/authorize", a.requireCSRF(), a.authorize)
 	api.POST("/oauth/token", a.token)
 	api.GET("/oauth/userinfo", a.userinfo)
@@ -176,7 +192,7 @@ func (a *API) listEmployees(_ context.Context, c *app.RequestContext) {
 			handleError(c, service.ErrForbidden)
 			return
 		}
-	} else if _, _, valid := a.adminSession(c); !valid {
+	} else if _, _, valid := a.permissionSession(c, service.PermissionEmployeeView); !valid {
 		return
 	}
 	result, err := a.service.ListEmployees(string(c.Query("q")), queryInt(c, "page", 1), queryInt(c, "pageSize", 20))
@@ -184,7 +200,7 @@ func (a *API) listEmployees(_ context.Context, c *app.RequestContext) {
 }
 
 func (a *API) createEmployee(_ context.Context, c *app.RequestContext) {
-	if _, _, valid := a.adminSession(c); !valid {
+	if _, _, valid := a.permissionSession(c, service.PermissionEmployeeManage); !valid {
 		return
 	}
 	var request service.EmployeeInput
@@ -200,7 +216,7 @@ func (a *API) createEmployee(_ context.Context, c *app.RequestContext) {
 }
 
 func (a *API) updateEmployee(_ context.Context, c *app.RequestContext) {
-	if _, _, valid := a.adminSession(c); !valid {
+	if _, _, valid := a.permissionSession(c, service.PermissionEmployeeManage); !valid {
 		return
 	}
 	var request service.EmployeeInput
@@ -212,7 +228,7 @@ func (a *API) updateEmployee(_ context.Context, c *app.RequestContext) {
 }
 
 func (a *API) deleteEmployee(_ context.Context, c *app.RequestContext) {
-	employee, _, valid := a.adminSession(c)
+	employee, _, valid := a.permissionSession(c, service.PermissionEmployeeManage)
 	if !valid {
 		return
 	}
@@ -224,7 +240,7 @@ func (a *API) deleteEmployee(_ context.Context, c *app.RequestContext) {
 }
 
 func (a *API) listDepartments(_ context.Context, c *app.RequestContext) {
-	if _, _, valid := a.adminSession(c); !valid {
+	if _, _, valid := a.session(c, false); !valid {
 		return
 	}
 	result, err := a.service.ListDepartments(string(c.Query("q")))
@@ -232,7 +248,7 @@ func (a *API) listDepartments(_ context.Context, c *app.RequestContext) {
 }
 
 func (a *API) createDepartment(_ context.Context, c *app.RequestContext) {
-	if _, _, valid := a.adminSession(c); !valid {
+	if _, _, valid := a.permissionSession(c, service.PermissionDepartmentManage); !valid {
 		return
 	}
 	var request service.DepartmentInput
@@ -248,7 +264,7 @@ func (a *API) createDepartment(_ context.Context, c *app.RequestContext) {
 }
 
 func (a *API) updateDepartment(_ context.Context, c *app.RequestContext) {
-	if _, _, valid := a.adminSession(c); !valid {
+	if _, _, valid := a.permissionSession(c, service.PermissionDepartmentManage); !valid {
 		return
 	}
 	var request service.DepartmentInput
@@ -260,7 +276,7 @@ func (a *API) updateDepartment(_ context.Context, c *app.RequestContext) {
 }
 
 func (a *API) deleteDepartment(_ context.Context, c *app.RequestContext) {
-	if _, _, valid := a.adminSession(c); !valid {
+	if _, _, valid := a.permissionSession(c, service.PermissionDepartmentManage); !valid {
 		return
 	}
 	if err := a.service.DeleteDepartment(c.Param("id")); err != nil {
@@ -268,6 +284,132 @@ func (a *API) deleteDepartment(_ context.Context, c *app.RequestContext) {
 		return
 	}
 	ok(c, utils.H{"deleted": true})
+}
+
+func (a *API) resetEmployeePassword(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.permissionSession(c, service.PermissionEmployeeReset); !valid {
+		return
+	}
+	if err := a.service.ResetEmployeePassword(c.Param("id")); err != nil {
+		handleError(c, err)
+		return
+	}
+	ok(c, utils.H{"reset": true})
+}
+
+func (a *API) setEmployeeEnabled(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.permissionSession(c, service.PermissionEmployeeDisable); !valid {
+		return
+	}
+	var request enabledRequest
+	if !bind(c, &request) {
+		return
+	}
+	result, err := a.service.SetEmployeeEnabled(c.Param("id"), request.Enabled)
+	respond(c, result, err)
+}
+
+func (a *API) hrDashboard(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.permissionSession(c, service.PermissionDashboardView); !valid {
+		return
+	}
+	result, err := a.service.Dashboard()
+	respond(c, result, err)
+}
+
+func (a *API) listDepartures(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	result, err := a.service.ListDepartures(employee, a.service.HasPermission(employee, service.PermissionDepartureReview))
+	respond(c, result, err)
+}
+
+func (a *API) createDeparture(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	var request service.DepartureInput
+	if !bind(c, &request) {
+		return
+	}
+	result, err := a.service.CreateDeparture(employee, request)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	created(c, result)
+}
+
+func (a *API) reviewDeparture(stage string) app.HandlerFunc {
+	return func(_ context.Context, c *app.RequestContext) {
+		employee, _, valid := a.session(c, false)
+		if !valid {
+			return
+		}
+		var request service.ReviewInput
+		if !bind(c, &request) {
+			return
+		}
+		result, err := a.service.ReviewDeparture(employee, c.Param("id"), stage, request, a.service.HasPermission(employee, service.PermissionDepartureReview))
+		respond(c, result, err)
+	}
+}
+
+func (a *API) cancelDeparture(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	if err := a.service.CancelDeparture(employee, c.Param("id")); err != nil {
+		handleError(c, err)
+		return
+	}
+	ok(c, utils.H{"cancelled": true})
+}
+
+func (a *API) listNotifications(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	result, err := a.service.ListNotifications(employee.PublicID, string(c.Query("unread")) == "true")
+	respond(c, result, err)
+}
+
+func (a *API) notificationSummary(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	result, err := a.service.NotificationSummary(employee, a.service.HasPermission(employee, service.PermissionDepartureReview))
+	respond(c, result, err)
+}
+
+func (a *API) markNotificationRead(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	if err := a.service.MarkNotificationRead(employee.PublicID, c.Param("id")); err != nil {
+		handleError(c, err)
+		return
+	}
+	ok(c, utils.H{"read": true})
+}
+
+func (a *API) markAllNotificationsRead(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	if err := a.service.MarkAllNotificationsRead(employee.PublicID); err != nil {
+		handleError(c, err)
+		return
+	}
+	ok(c, utils.H{"read": true})
 }
 
 func (a *API) listDirectoryEmployees(_ context.Context, c *app.RequestContext) {
@@ -365,12 +507,12 @@ func (a *API) session(c *app.RequestContext, allowPasswordChange bool) (*model.E
 	return employee, session, true
 }
 
-func (a *API) adminSession(c *app.RequestContext) (*model.Employee, *model.Session, bool) {
+func (a *API) permissionSession(c *app.RequestContext, code string) (*model.Employee, *model.Session, bool) {
 	employee, session, valid := a.session(c, false)
 	if !valid {
 		return nil, nil, false
 	}
-	if employee.Role != model.RoleAdmin {
+	if !a.service.HasPermission(employee, code) {
 		handleError(c, service.ErrForbidden)
 		return nil, nil, false
 	}

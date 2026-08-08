@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"path/filepath"
 	"testing"
@@ -47,7 +48,7 @@ func TestNewEmployeeMustSetPasswordBeforeOAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	created, err := svc.CreateEmployee(EmployeeInput{
-		EmployeeNo: "E001", Username: "alice", DisplayName: "Alice", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled,
+		Username: "alice", DisplayName: "Alice", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +85,7 @@ func TestNewEmployeeMustSetPasswordBeforeOAuth(t *testing.T) {
 
 func TestEmployeeRequiresManagedDepartment(t *testing.T) {
 	svc := newTestService(t)
-	input := EmployeeInput{EmployeeNo: "E002", Username: "bob", DisplayName: "Bob", Role: model.RoleEmployee, Status: model.StatusEnabled}
+	input := EmployeeInput{Username: "bob", DisplayName: "Bob", Role: model.RoleEmployee, Status: model.StatusEnabled}
 	if _, err := svc.CreateEmployee(input); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("CreateEmployee() without department error = %v, want invalid", err)
 	}
@@ -133,16 +134,20 @@ func TestEmployeeRequiresManagedDepartment(t *testing.T) {
 	}
 }
 
-func TestAdminMayHaveNoDepartment(t *testing.T) {
+func TestEmployeeRoleCannotBeElevatedThroughEmployeeInput(t *testing.T) {
 	svc := newTestService(t)
+	department, err := svc.CreateDepartment(DepartmentInput{Code: "security", Name: "安全部", Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
 	created, err := svc.CreateEmployee(EmployeeInput{
-		EmployeeNo: "A002", Username: "operator", DisplayName: "Operator", Role: model.RoleAdmin, Status: model.StatusEnabled,
+		Username: "operator", DisplayName: "Operator", DepartmentID: department.ID, Role: model.RoleAdmin, Status: model.StatusDisabled,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.DepartmentID != "" || created.Department != "" {
-		t.Fatalf("admin department = %#v", created)
+	if created.Role != model.RoleEmployee || created.Status != model.StatusEnabled {
+		t.Fatalf("created employee privilege = %#v", created)
 	}
 }
 
@@ -182,7 +187,7 @@ func TestOAuthAccountSwitchDoesNotReplacePeopleSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	alice, err := svc.CreateEmployee(EmployeeInput{
-		EmployeeNo: "E003", Username: "alice", DisplayName: "Alice", DepartmentID: department.ID,
+		Username: "alice", DisplayName: "Alice", DepartmentID: department.ID,
 		Role: model.RoleEmployee, Status: model.StatusEnabled,
 	})
 	if err != nil {
@@ -236,5 +241,116 @@ func TestOAuthAccountSwitchDoesNotReplacePeopleSession(t *testing.T) {
 	}
 	if _, err := svc.AuthenticateOAuthAccount("alice", "wrong-password"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("wrong switched account password error = %v, want unauthorized", err)
+	}
+}
+
+func TestEmployeeNumberIsDatabaseGeneratedAndImmutable(t *testing.T) {
+	svc := newTestService(t)
+	department, err := svc.CreateDepartment(DepartmentInput{Code: "operations", Name: "运营部", Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.CreateEmployee(EmployeeInput{Username: "first", DisplayName: "First", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.CreateEmployee(EmployeeInput{Username: "second", DisplayName: "Second", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.EmployeeNo == 0 || second.EmployeeNo != first.EmployeeNo+1 {
+		t.Fatalf("employee numbers = %d, %d, want consecutive generated values", first.EmployeeNo, second.EmployeeNo)
+	}
+	updated, err := svc.UpdateEmployee(first.PublicID, EmployeeInput{Username: "first", DisplayName: "First Updated", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.EmployeeNo != first.EmployeeNo {
+		t.Fatalf("updated employee number = %d, want %d", updated.EmployeeNo, first.EmployeeNo)
+	}
+	page, err := svc.ListEmployees(fmt.Sprintf("%06d", first.EmployeeNo), 1, 20)
+	if err != nil || page.Total != 1 || page.Items[0].PublicID != first.PublicID {
+		t.Fatalf("padded employee number search = %#v, %v", page, err)
+	}
+}
+
+func TestDepartureRequiresLeaderThenHRAndDisablesEmployee(t *testing.T) {
+	svc := newTestService(t)
+	department, err := svc.CreateDepartment(DepartmentInput{Code: "support", Name: "客户支持", Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leader, err := svc.CreateEmployee(EmployeeInput{Username: "leader", DisplayName: "Leader", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := svc.CreateEmployee(EmployeeInput{Username: "worker", DisplayName: "Worker", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateDepartment(department.ID, DepartmentInput{Code: department.Code, Name: department.Name, LeaderID: leader.PublicID, Status: model.StatusEnabled}); err != nil {
+		t.Fatal(err)
+	}
+	request, err := svc.CreateDeparture(worker, DepartureInput{Reason: "个人发展", LastWorkingDate: time.Now().UTC().AddDate(0, 0, 14).Format("2006-01-02")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Status != model.DeparturePendingManager {
+		t.Fatalf("departure status = %q", request.Status)
+	}
+	if _, err := svc.ReviewDeparture(worker, request.ID, "manager", ReviewInput{Approved: true}, false); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("worker manager review error = %v, want forbidden", err)
+	}
+	request, err = svc.ReviewDeparture(leader, request.ID, "manager", ReviewInput{Approved: true, Comment: "同意"}, false)
+	if err != nil || request.Status != model.DeparturePendingHR {
+		t.Fatalf("manager review = %#v, %v", request, err)
+	}
+	if _, err := svc.ReviewDeparture(leader, request.ID, "hr", ReviewInput{Approved: true}, false); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-HR review error = %v, want forbidden", err)
+	}
+	request, err = svc.ReviewDeparture(leader, request.ID, "hr", ReviewInput{Approved: true, Comment: "完成交接"}, true)
+	if err != nil || request.Status != model.DepartureApproved {
+		t.Fatalf("HR review = %#v, %v", request, err)
+	}
+	disabled, err := svc.GetEmployee(worker.PublicID)
+	if err != nil || disabled.Status != model.StatusDisabled {
+		t.Fatalf("employee after approval = %#v, %v", disabled, err)
+	}
+	notifications, err := svc.ListNotifications(worker.PublicID, false)
+	if err != nil || len(notifications) == 0 {
+		t.Fatalf("applicant notifications = %#v, %v", notifications, err)
+	}
+}
+
+func TestDepartmentLeaderDepartureFallsBackToAdministrator(t *testing.T) {
+	svc := newTestService(t)
+	department, err := svc.CreateDepartment(DepartmentInput{Code: "executive", Name: "管理部", Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leader, err := svc.CreateEmployee(EmployeeInput{Username: "director", DisplayName: "Director", DepartmentID: department.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateDepartment(department.ID, DepartmentInput{Code: department.Code, Name: department.Name, LeaderID: leader.PublicID, Status: model.StatusEnabled}); err != nil {
+		t.Fatal(err)
+	}
+	request, err := svc.CreateDeparture(leader, DepartureInput{Reason: "个人发展", LastWorkingDate: time.Now().UTC().AddDate(0, 0, 7).Format("2006-01-02")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.DepartmentLeaderID != "people-admin" {
+		t.Fatalf("leader departure approver = %q, want people-admin", request.DepartmentLeaderID)
+	}
+	administrator, err := svc.GetEmployee("people-admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err = svc.ReviewDeparture(administrator, request.ID, "manager", ReviewInput{Approved: true}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ReviewDeparture(leader, request.ID, "hr", ReviewInput{Approved: true}, true); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("self HR review error = %v, want forbidden", err)
 	}
 }

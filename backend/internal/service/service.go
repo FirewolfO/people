@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -10,7 +11,9 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"people/internal/model"
@@ -34,20 +37,51 @@ var (
 )
 
 type Service struct {
-	store      *store.Store
-	sessionTTL time.Duration
+	store           *store.Store
+	sessionTTL      time.Duration
+	authorizer      Authorizer
+	permissionMu    sync.Mutex
+	permissionCache map[string]permissionCacheEntry
+}
+
+type permissionCacheEntry struct {
+	permissions []string
+	expiresAt   time.Time
+}
+
+const (
+	PermissionEmployeeView     = "people.employee:view"
+	PermissionEmployeeManage   = "people.employee:manage"
+	PermissionEmployeeReset    = "people.employee:reset"
+	PermissionEmployeeDisable  = "people.employee:disable"
+	PermissionDepartmentManage = "people.department:manage"
+	PermissionDepartureView    = "people.departure:view"
+	PermissionDepartureReview  = "people.departure:review"
+	PermissionDashboardView    = "people.dashboard:view"
+)
+
+var elevatedPermissions = []string{
+	PermissionEmployeeView, PermissionEmployeeManage, PermissionEmployeeReset, PermissionEmployeeDisable,
+	PermissionDepartmentManage, PermissionDepartureView, PermissionDepartureReview, PermissionDashboardView,
+}
+
+type Authorizer interface {
+	Authorize(context.Context, string, []string) (map[string]bool, error)
 }
 
 type EmployeeInput struct {
-	EmployeeNo   string `json:"employeeNo"`
-	Username     string `json:"username"`
-	DisplayName  string `json:"displayName"`
-	Email        string `json:"email"`
-	Phone        string `json:"phone"`
-	DepartmentID string `json:"departmentId"`
-	Title        string `json:"title"`
-	Role         string `json:"role"`
-	Status       string `json:"status"`
+	Username         string `json:"username"`
+	DisplayName      string `json:"displayName"`
+	Email            string `json:"email"`
+	Phone            string `json:"phone"`
+	DepartmentID     string `json:"departmentId"`
+	Title            string `json:"title"`
+	EmploymentType   string `json:"employmentType"`
+	HireDate         string `json:"hireDate"`
+	ProbationEndDate string `json:"probationEndDate"`
+	WorkLocation     string `json:"workLocation"`
+	Role             string `json:"role"`
+	Status           string `json:"status"`
 }
 
 type DepartmentInput struct {
@@ -55,6 +89,7 @@ type DepartmentInput struct {
 	Code        string `json:"code"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	LeaderID    string `json:"leaderId"`
 	Status      string `json:"status"`
 }
 
@@ -73,8 +108,55 @@ type TokenResult struct {
 	User        *model.Employee `json:"user,omitempty"`
 }
 
-func New(store *store.Store, sessionTTL time.Duration) *Service {
-	return &Service{store: store, sessionTTL: sessionTTL}
+func New(store *store.Store, sessionTTL time.Duration, authorizers ...Authorizer) *Service {
+	service := &Service{store: store, sessionTTL: sessionTTL, permissionCache: make(map[string]permissionCacheEntry)}
+	if len(authorizers) > 0 {
+		service.authorizer = authorizers[0]
+	}
+	return service
+}
+
+func (s *Service) loadPermissions(employee *model.Employee) {
+	if employee == nil {
+		return
+	}
+	employee.Permissions = []string{}
+	if s.authorizer == nil {
+		return
+	}
+	now := time.Now().UTC()
+	s.permissionMu.Lock()
+	cached, exists := s.permissionCache[employee.Username]
+	if exists && cached.expiresAt.After(now) {
+		employee.Permissions = append(employee.Permissions, cached.permissions...)
+		s.permissionMu.Unlock()
+		return
+	}
+	s.permissionMu.Unlock()
+	allowed, err := s.authorizer.Authorize(context.Background(), employee.Username, elevatedPermissions)
+	if err != nil {
+		return
+	}
+	for _, code := range elevatedPermissions {
+		if allowed[code] {
+			employee.Permissions = append(employee.Permissions, code)
+		}
+	}
+	s.permissionMu.Lock()
+	s.permissionCache[employee.Username] = permissionCacheEntry{permissions: append([]string(nil), employee.Permissions...), expiresAt: now.Add(15 * time.Second)}
+	s.permissionMu.Unlock()
+}
+
+func (s *Service) HasPermission(employee *model.Employee, code string) bool {
+	if employee == nil {
+		return false
+	}
+	for _, current := range employee.Permissions {
+		if current == code {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) Login(username, password string) (*model.Employee, string, error) {
@@ -103,6 +185,7 @@ func (s *Service) Login(username, password string) (*model.Employee, string, err
 	if err := s.store.DB.Model(&employee).Update("last_login_at", now).Error; err != nil {
 		return nil, "", err
 	}
+	s.loadPermissions(&employee)
 	return &employee, token, nil
 }
 
@@ -131,6 +214,7 @@ func (s *Service) AuthenticateSession(token string) (*model.Employee, *model.Ses
 	if err != nil || session.Employee.Status != model.StatusEnabled {
 		return nil, nil, ErrUnauthorized
 	}
+	s.loadPermissions(&session.Employee)
 	return &session.Employee, &session, nil
 }
 
@@ -172,7 +256,11 @@ func (s *Service) ListEmployees(search string, page, pageSize int) (Page, error)
 	query := s.store.DB.Model(&model.Employee{})
 	if value := strings.TrimSpace(search); value != "" {
 		like := "%" + value + "%"
-		query = query.Where("employee_no LIKE ? OR username LIKE ? OR display_name LIKE ? OR email LIKE ? OR department LIKE ?", like, like, like, like, like)
+		if employeeNo, err := strconv.ParseUint(value, 10, 64); err == nil {
+			query = query.Where("id = ? OR username LIKE ? OR display_name LIKE ? OR email LIKE ? OR department LIKE ?", employeeNo, like, like, like, like)
+		} else {
+			query = query.Where("username LIKE ? OR display_name LIKE ? OR email LIKE ? OR department LIKE ?", like, like, like, like)
+		}
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -196,6 +284,8 @@ func (s *Service) GetEmployee(publicID string) (*model.Employee, error) {
 }
 
 func (s *Service) CreateEmployee(input EmployeeInput) (*model.Employee, error) {
+	input.Role = model.RoleEmployee
+	input.Status = model.StatusEnabled
 	normalized, err := normalizeEmployee(input)
 	if err != nil {
 		return nil, err
@@ -205,20 +295,21 @@ func (s *Service) CreateEmployee(input EmployeeInput) (*model.Employee, error) {
 		return nil, err
 	}
 	var count int64
-	if err := s.store.DB.Model(&model.Employee{}).Where("employee_no = ? OR LOWER(username) = ?", normalized.EmployeeNo, strings.ToLower(normalized.Username)).Count(&count).Error; err != nil {
+	if err := s.store.DB.Model(&model.Employee{}).Where("LOWER(username) = ?", strings.ToLower(normalized.Username)).Count(&count).Error; err != nil {
 		return nil, err
 	}
 	if count > 0 {
-		return nil, fmt.Errorf("%w: 工号或用户名已存在", ErrConflict)
+		return nil, fmt.Errorf("%w: 用户名已存在", ErrConflict)
 	}
 	publicID, err := randomToken("pep_", 18)
 	if err != nil {
 		return nil, err
 	}
 	employee := model.Employee{
-		PublicID: publicID, EmployeeNo: normalized.EmployeeNo, Username: normalized.Username,
+		PublicID: publicID, LegacyEmployeeNo: publicID, Username: normalized.Username,
 		DisplayName: normalized.DisplayName, Email: normalized.Email, Phone: normalized.Phone,
-		Title: normalized.Title, Role: normalized.Role,
+		Title: normalized.Title, EmploymentType: normalized.EmploymentType, HireDate: normalized.HireDate,
+		ProbationEndDate: normalized.ProbationEndDate, WorkLocation: normalized.WorkLocation, Role: normalized.Role,
 		Status: normalized.Status, MustChangePassword: true,
 	}
 	if department != nil {
@@ -240,9 +331,9 @@ func (s *Service) UpdateEmployee(publicID string, input EmployeeInput) (*model.E
 	}
 	if employee.Username == "admin" {
 		input.Username = "admin"
-		input.Role = model.RoleAdmin
-		input.Status = model.StatusEnabled
 	}
+	input.Role = employee.Role
+	input.Status = employee.Status
 	normalized, err := normalizeEmployee(input)
 	if err != nil {
 		return nil, err
@@ -251,22 +342,33 @@ func (s *Service) UpdateEmployee(publicID string, input EmployeeInput) (*model.E
 	if err != nil {
 		return nil, err
 	}
+	if employee.DepartmentID != normalized.DepartmentID {
+		var leaderCount int64
+		if err := s.store.DB.Model(&model.Department{}).Where("leader_id = ?", employee.PublicID).Count(&leaderCount).Error; err != nil {
+			return nil, err
+		}
+		if leaderCount > 0 {
+			return nil, fmt.Errorf("%w: 请先为其负责的部门更换负责人", ErrConflict)
+		}
+	}
 	var count int64
-	if err := s.store.DB.Model(&model.Employee{}).Where("id <> ? AND (employee_no = ? OR LOWER(username) = ?)", employee.ID, normalized.EmployeeNo, strings.ToLower(normalized.Username)).Count(&count).Error; err != nil {
+	if err := s.store.DB.Model(&model.Employee{}).Where("id <> ? AND LOWER(username) = ?", employee.ID, strings.ToLower(normalized.Username)).Count(&count).Error; err != nil {
 		return nil, err
 	}
 	if count > 0 {
-		return nil, fmt.Errorf("%w: 工号或用户名已存在", ErrConflict)
+		return nil, fmt.Errorf("%w: 用户名已存在", ErrConflict)
 	}
 	departmentID, departmentName := "", ""
 	if department != nil {
 		departmentID, departmentName = department.ID, department.Name
 	}
 	if err := s.store.DB.Model(&employee).Updates(map[string]any{
-		"employee_no": normalized.EmployeeNo, "username": normalized.Username,
+		"username":     normalized.Username,
 		"display_name": normalized.DisplayName, "email": normalized.Email, "phone": normalized.Phone,
 		"department_id": departmentID, "department": departmentName,
-		"title": normalized.Title, "role": normalized.Role, "status": normalized.Status,
+		"title": normalized.Title, "employment_type": normalized.EmploymentType, "hire_date": normalized.HireDate,
+		"probation_end_date": normalized.ProbationEndDate, "work_location": normalized.WorkLocation,
+		"role": normalized.Role, "status": normalized.Status,
 	}).Error; err != nil {
 		return nil, err
 	}
@@ -287,6 +389,12 @@ func (s *Service) ListDepartments(search string) ([]model.Department, error) {
 		if err := s.store.DB.Model(&model.Employee{}).Where("department_id = ?", departments[index].ID).
 			Count(&departments[index].EmployeeCount).Error; err != nil {
 			return nil, err
+		}
+		if departments[index].LeaderID != "" {
+			var leader model.Employee
+			if err := s.store.DB.Select("display_name").Where("public_id = ?", departments[index].LeaderID).First(&leader).Error; err == nil {
+				departments[index].LeaderName = leader.DisplayName
+			}
 		}
 	}
 	return departments, nil
@@ -309,7 +417,10 @@ func (s *Service) CreateDepartment(input DepartmentInput) (*model.Department, er
 	if err != nil {
 		return nil, err
 	}
-	department := model.Department{ID: id, ParentID: normalized.ParentID, Code: normalized.Code, Name: normalized.Name, Description: normalized.Description, Status: normalized.Status}
+	if err := s.validateDepartmentLeader(id, normalized.LeaderID); err != nil {
+		return nil, err
+	}
+	department := model.Department{ID: id, ParentID: normalized.ParentID, Code: normalized.Code, Name: normalized.Name, Description: normalized.Description, LeaderID: normalized.LeaderID, Status: normalized.Status}
 	if err := s.store.DB.Create(&department).Error; err != nil {
 		return nil, err
 	}
@@ -335,10 +446,13 @@ func (s *Service) UpdateDepartment(id string, input DepartmentInput) (*model.Dep
 	if err := s.validateDepartmentParent(department.ID, normalized.ParentID); err != nil {
 		return nil, err
 	}
+	if err := s.validateDepartmentLeader(department.ID, normalized.LeaderID); err != nil {
+		return nil, err
+	}
 	err = s.store.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&department).Updates(map[string]any{
 			"parent_id": normalized.ParentID, "code": normalized.Code, "name": normalized.Name,
-			"description": normalized.Description, "status": normalized.Status,
+			"description": normalized.Description, "leader_id": normalized.LeaderID, "status": normalized.Status,
 		}).Error; err != nil {
 			return err
 		}
@@ -354,6 +468,18 @@ func (s *Service) UpdateDepartment(id string, input DepartmentInput) (*model.Dep
 		return nil, err
 	}
 	return &department, nil
+}
+
+func (s *Service) validateDepartmentLeader(departmentID, leaderID string) error {
+	leaderID = strings.TrimSpace(leaderID)
+	if leaderID == "" {
+		return nil
+	}
+	var leader model.Employee
+	if err := s.store.DB.Where("public_id = ? AND department_id = ? AND status = ?", leaderID, departmentID, model.StatusEnabled).First(&leader).Error; err != nil {
+		return fmt.Errorf("%w: 部门负责人必须是本部门的在职员工", ErrInvalid)
+	}
+	return nil
 }
 
 func (s *Service) DeleteDepartment(id string) error {
@@ -443,6 +569,13 @@ func (s *Service) DeleteEmployee(publicID string, actorID uint) error {
 	}
 	if employee.ID == actorID || employee.Username == "admin" {
 		return fmt.Errorf("%w: 不能删除当前用户或内置管理员", ErrInvalid)
+	}
+	var leaderCount int64
+	if err := s.store.DB.Model(&model.Department{}).Where("leader_id = ?", employee.PublicID).Count(&leaderCount).Error; err != nil {
+		return err
+	}
+	if leaderCount > 0 {
+		return fmt.Errorf("%w: 请先为其负责的部门更换负责人", ErrConflict)
 	}
 	return s.store.DB.Delete(&employee).Error
 }
@@ -572,17 +705,20 @@ func (s *Service) authenticateOAuthClient(clientID, clientSecret string) (*model
 }
 
 func normalizeEmployee(input EmployeeInput) (EmployeeInput, error) {
-	input.EmployeeNo = strings.ToUpper(strings.TrimSpace(input.EmployeeNo))
 	input.Username = strings.TrimSpace(input.Username)
 	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	input.Phone = strings.TrimSpace(input.Phone)
 	input.DepartmentID = strings.TrimSpace(input.DepartmentID)
 	input.Title = strings.TrimSpace(input.Title)
+	input.EmploymentType = strings.ToLower(strings.TrimSpace(input.EmploymentType))
+	input.HireDate = strings.TrimSpace(input.HireDate)
+	input.ProbationEndDate = strings.TrimSpace(input.ProbationEndDate)
+	input.WorkLocation = strings.TrimSpace(input.WorkLocation)
 	input.Role = strings.ToLower(strings.TrimSpace(input.Role))
 	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
-	if input.EmployeeNo == "" || len(input.EmployeeNo) > 32 || !usernamePattern.MatchString(input.Username) || input.DisplayName == "" || len(input.DisplayName) > 100 {
-		return input, fmt.Errorf("%w: 工号、用户名或姓名格式无效", ErrInvalid)
+	if !usernamePattern.MatchString(input.Username) || input.DisplayName == "" || len(input.DisplayName) > 100 {
+		return input, fmt.Errorf("%w: 用户名或姓名格式无效", ErrInvalid)
 	}
 	if input.Role == "" {
 		input.Role = model.RoleEmployee
@@ -596,7 +732,25 @@ func normalizeEmployee(input EmployeeInput) (EmployeeInput, error) {
 	if input.Status != model.StatusEnabled && input.Status != model.StatusDisabled {
 		return input, fmt.Errorf("%w: 状态无效", ErrInvalid)
 	}
-	if len(input.Email) > 255 || len(input.Phone) > 32 || len(input.DepartmentID) > 40 || len(input.Title) > 100 {
+	if input.EmploymentType == "" {
+		input.EmploymentType = model.EmploymentFullTime
+	}
+	switch input.EmploymentType {
+	case model.EmploymentFullTime, model.EmploymentPartTime, model.EmploymentContract, model.EmploymentIntern:
+	default:
+		return input, fmt.Errorf("%w: 用工类型无效", ErrInvalid)
+	}
+	for _, date := range []string{input.HireDate, input.ProbationEndDate} {
+		if date != "" {
+			if _, err := time.Parse("2006-01-02", date); err != nil {
+				return input, fmt.Errorf("%w: 日期格式必须为 YYYY-MM-DD", ErrInvalid)
+			}
+		}
+	}
+	if input.HireDate != "" && input.ProbationEndDate != "" && input.ProbationEndDate < input.HireDate {
+		return input, fmt.Errorf("%w: 试用期结束日期不能早于入职日期", ErrInvalid)
+	}
+	if len(input.Email) > 255 || len(input.Phone) > 32 || len(input.DepartmentID) > 40 || len(input.Title) > 100 || len(input.WorkLocation) > 100 {
 		return input, fmt.Errorf("%w: 员工资料过长", ErrInvalid)
 	}
 	return input, nil
@@ -607,11 +761,12 @@ func normalizeDepartment(input DepartmentInput) (DepartmentInput, error) {
 	input.Code = strings.ToLower(strings.TrimSpace(input.Code))
 	input.Name = strings.TrimSpace(input.Name)
 	input.Description = strings.TrimSpace(input.Description)
+	input.LeaderID = strings.TrimSpace(input.LeaderID)
 	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
 	if !departmentCodePattern.MatchString(input.Code) {
 		return input, fmt.Errorf("%w: 部门编码须以字母开头，且只能包含小写字母、数字、下划线或连字符", ErrInvalid)
 	}
-	if input.Name == "" || len(input.Name) > 100 || len(input.ParentID) > 40 || len(input.Description) > 500 {
+	if input.Name == "" || len(input.Name) > 100 || len(input.ParentID) > 40 || len(input.Description) > 500 || len(input.LeaderID) > 40 {
 		return input, fmt.Errorf("%w: 部门名称或描述格式无效", ErrInvalid)
 	}
 	if input.Status == "" {

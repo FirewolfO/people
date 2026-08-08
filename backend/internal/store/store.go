@@ -33,7 +33,7 @@ func Open(dsn, permissionClientID, permissionClientSecret string, redirectURIs [
 	if err := db.Exec("PRAGMA foreign_keys = ON").Error; err != nil {
 		return nil, err
 	}
-	if err := db.AutoMigrate(&model.Department{}, &model.Employee{}, &model.Session{}, &model.OAuthClient{}, &model.OAuthCode{}, &model.OAuthToken{}); err != nil {
+	if err := db.AutoMigrate(&model.Department{}, &model.Employee{}, &model.Session{}, &model.OAuthClient{}, &model.OAuthCode{}, &model.OAuthToken{}, &model.DepartureRequest{}, &model.Notification{}); err != nil {
 		return nil, err
 	}
 	if err := migrateLegacyDepartments(db); err != nil {
@@ -44,11 +44,11 @@ func Open(dsn, permissionClientID, permissionClientSecret string, redirectURIs [
 		return nil, err
 	}
 	admin := model.Employee{
-		PublicID: "people-admin", EmployeeNo: "ADMIN", Username: "admin", DisplayName: "系统管理员",
+		PublicID: "people-admin", LegacyEmployeeNo: "people-admin", Username: "admin", DisplayName: "系统管理员",
 		Role: model.RoleAdmin, Status: model.StatusEnabled, PasswordHash: string(passwordHash), MustChangePassword: false,
 	}
 	adminCreate := db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "username"}}, DoNothing: true}).
-		Select("PublicID", "EmployeeNo", "Username", "DisplayName", "Role", "Status", "PasswordHash", "MustChangePassword").
+		Select("PublicID", "LegacyEmployeeNo", "Username", "DisplayName", "Role", "Status", "PasswordHash", "MustChangePassword").
 		Create(&admin)
 	if adminCreate.Error != nil {
 		return nil, adminCreate.Error

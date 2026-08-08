@@ -6,6 +6,7 @@ import (
 
 	"people/internal/api"
 	"people/internal/config"
+	permissionclient "people/internal/permission"
 	"people/internal/security"
 	"people/internal/service"
 	"people/internal/store"
@@ -25,7 +26,8 @@ func main() {
 	}
 	defer database.Close()
 
-	svc := service.New(database, cfg.SessionTTL)
+	authorizer := permissionclient.New(cfg.PermissionAPIBaseURL, cfg.PermissionServiceID, cfg.PermissionServiceSecret)
+	svc := service.New(database, cfg.SessionTTL, authorizer)
 	verifier := security.NewGatewayVerifier(cfg.GatewayAccessKey, cfg.GatewaySecretKey, 5*time.Minute)
 	innerVerifier := security.NewGatewayVerifier(cfg.InnerAccessKey, cfg.InnerSecretKey, 5*time.Minute)
 	api.NewServer(cfg.Address, verifier, innerVerifier, svc, cfg.SessionTTL, cfg.CookieSecure).Spin()

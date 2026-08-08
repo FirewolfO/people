@@ -7,6 +7,9 @@ const state = reactive<{ user: Employee | null; initialized: boolean }>({ user: 
 export const auth = {
   state,
   authenticated: computed(() => Boolean(state.user)),
+  can(code: string) {
+    return state.user?.permissions?.includes(code) || false
+  },
   async hydrate() {
     if (state.initialized) return
     try {

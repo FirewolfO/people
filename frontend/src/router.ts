@@ -5,7 +5,7 @@ declare module 'vue-router' {
   interface RouteMeta {
     title?: string
     public?: boolean
-    admin?: boolean
+    permission?: string
   }
 }
 
@@ -19,9 +19,11 @@ const router = createRouter({
       path: '/',
       component: () => import('@/layouts/AppLayout.vue'),
       children: [
-        { path: '', redirect: '/employees' },
-        { path: 'employees', name: 'employees', component: () => import('@/views/EmployeesView.vue'), meta: { title: '员工管理', admin: true } },
-        { path: 'departments', name: 'departments', component: () => import('@/views/DepartmentsView.vue'), meta: { title: '部门管理', admin: true } },
+        { path: '', redirect: '/departures' },
+        { path: 'dashboard', name: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '人事概览', permission: 'people.dashboard:view' } },
+        { path: 'employees', name: 'employees', component: () => import('@/views/EmployeesView.vue'), meta: { title: '员工管理', permission: 'people.employee:view' } },
+        { path: 'departments', name: 'departments', component: () => import('@/views/DepartmentsView.vue'), meta: { title: '部门管理', permission: 'people.department:manage' } },
+        { path: 'departures', name: 'departures', component: () => import('@/views/DeparturesView.vue'), meta: { title: '离职审批' } },
         { path: 'profile', name: 'profile', component: () => import('@/views/ProfileView.vue'), meta: { title: '个人资料' } },
       ],
     },
@@ -39,7 +41,7 @@ router.beforeEach(async (to) => {
   if (!auth.authenticated.value) return { name: 'login', query: { redirect: to.fullPath } }
   if (auth.state.user?.mustChangePassword && to.name !== 'change-password') return { name: 'change-password', query: { redirect: to.fullPath } }
   if (!auth.state.user?.mustChangePassword && to.name === 'change-password') return '/'
-  if (to.meta.admin && auth.state.user?.role !== 'admin') return '/profile'
+  if (to.meta.permission && !auth.can(to.meta.permission)) return '/departures'
   return true
 })
 
