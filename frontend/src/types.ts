@@ -15,6 +15,9 @@ export interface Employee {
   hireDate: string
   probationEndDate: string
   workLocation: string
+  emergencyContactName: string
+  emergencyContactPhone: string
+  emergencyContactRelation: string
   role: 'admin' | 'employee'
   status: EmployeeStatus
   permissions: string[]
@@ -36,6 +39,9 @@ export interface EmployeeInput {
   hireDate: string
   probationEndDate: string
   workLocation: string
+  emergencyContactName: string
+  emergencyContactPhone: string
+  emergencyContactRelation: string
 }
 
 export interface Department {
@@ -113,9 +119,146 @@ export interface HRDashboard {
   disabledEmployees: number
   departments: number
   pendingDepartures: number
+  pendingApprovals: number
   probationEmployees: number
   recentHires: number
+  employeesOnLeave: number
+  contractsExpiring: number
+  activeGoals: number
+  overdueGoals: number
+  departmentDistribution: MetricBucket[]
+  employmentTypeDistribution: MetricBucket[]
+  approvalDistribution: MetricBucket[]
 }
+
+export interface MetricBucket { name: string; count: number }
+
+export type ApprovalType = 'leave' | 'transfer' | 'departure'
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'cancelled'
+export type ApprovalStepStatus = 'waiting' | 'pending' | 'approved' | 'rejected' | 'skipped'
+
+export interface ApprovalStep {
+  id: number
+  sequence: number
+  name: string
+  approverId: string
+  permissionCode: string
+  status: ApprovalStepStatus
+  reviewerId: string
+  reviewerName: string
+  comment: string
+  reviewedAt?: string | null
+}
+
+export interface ApprovalRequest {
+  id: string
+  type: ApprovalType
+  title: string
+  summary: string
+  applicantId: string
+  applicantName: string
+  applicantNo: number
+  departmentId: string
+  departmentName: string
+  data: Record<string, string | number>
+  status: ApprovalStatus
+  currentStep: number
+  totalSteps: number
+  currentStepName: string
+  steps: ApprovalStep[]
+  canReview: boolean
+  canCancel: boolean
+  submittedAt: string
+  completedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ApprovalTypeDefinition {
+  code: ApprovalType
+  name: string
+  description: string
+  steps: string[]
+}
+
+export interface LeaveBalance {
+  employeeId: string
+  year: number
+  annualEntitlement: number
+  annualUsed: number
+  annualPending: number
+  annualRemaining: number
+  sickUsed: number
+  personalUsed: number
+}
+
+export interface LeaveRecord {
+  id: string
+  approvalId: string
+  employeeId: string
+  employeeName: string
+  departmentId: string
+  departmentName: string
+  leaveType: string
+  startDate: string
+  endDate: string
+  days: number
+  reason: string
+  status: ApprovalStatus
+}
+
+export interface EmploymentEvent {
+  id: string
+  employeeId: string
+  type: 'hire' | 'transfer' | 'promotion' | 'departure' | 'enable' | 'disable'
+  effectiveDate: string
+  fromDepartmentId: string
+  fromDepartment: string
+  toDepartmentId: string
+  toDepartment: string
+  fromTitle: string
+  toTitle: string
+  note: string
+  approvalId: string
+  createdAt: string
+}
+
+export interface EmployeeContract {
+  id: string
+  employeeId: string
+  employeeName: string
+  type: 'fixed_term' | 'open_ended' | 'internship' | 'service'
+  startDate: string
+  endDate: string
+  status: 'active' | 'ended' | 'terminated'
+  documentName: string
+  note: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type ContractInput = Pick<EmployeeContract, 'type' | 'startDate' | 'endDate' | 'status' | 'documentName' | 'note'>
+
+export interface PerformanceGoal {
+  id: string
+  employeeId: string
+  employeeName: string
+  departmentId: string
+  cycle: string
+  title: string
+  description: string
+  dueDate: string
+  weight: number
+  progress: number
+  status: 'draft' | 'active' | 'completed' | 'cancelled'
+  managerComment: string
+  canEdit: boolean
+  canReview: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export type GoalInput = Pick<PerformanceGoal, 'cycle' | 'title' | 'description' | 'dueDate' | 'weight' | 'progress' | 'status' | 'managerComment'>
 
 export interface Page<T> {
   items: T[]

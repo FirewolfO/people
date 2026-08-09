@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Delete, Edit, Key, Plus, Search, SwitchButton } from '@element-plus/icons-vue'
+import { Clock, Delete, Edit, Key, Plus, Search, SwitchButton } from '@element-plus/icons-vue'
 import { peopleApi, apiMessage } from '@/api'
 import { buildDepartmentTree } from '@/departments'
 import { auth } from '@/auth'
-import type { Department, Employee, EmployeeInput, EmploymentType } from '@/types'
+import type { Department, Employee, EmployeeInput, EmploymentEvent, EmploymentType } from '@/types'
 
 const items = ref<Employee[]>([])
 const departments = ref<Department[]>([])
@@ -17,11 +17,15 @@ const dialogVisible = ref(false)
 const editingID = ref('')
 const editingAdmin = ref(false)
 const saving = ref(false)
+const historyOpen = ref(false)
+const historyLoading = ref(false)
+const historyEmployee = ref<Employee | null>(null)
+const history = ref<EmploymentEvent[]>([])
 const formRef = ref<FormInstance>()
 const canManage = computed(() => auth.can('people.employee:manage'))
 const canReset = computed(() => auth.can('people.employee:reset'))
 const canDisable = computed(() => auth.can('people.employee:disable'))
-const emptyForm = (): EmployeeInput => ({ username: '', displayName: '', email: '', phone: '', departmentId: '', title: '', employmentType: 'full_time', hireDate: '', probationEndDate: '', workLocation: '' })
+const emptyForm = (): EmployeeInput => ({ username: '', displayName: '', email: '', phone: '', departmentId: '', title: '', employmentType: 'full_time', hireDate: '', probationEndDate: '', workLocation: '', emergencyContactName: '', emergencyContactPhone: '', emergencyContactRelation: '' })
 const form = reactive<EmployeeInput>(emptyForm())
 const rules: FormRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }, { pattern: /^[A-Za-z][A-Za-z0-9_.-]{2,63}$/, message: '用户名格式无效', trigger: 'blur' }],
@@ -29,6 +33,7 @@ const rules: FormRules = {
   departmentId: [{ validator: (_rule, value, callback) => { if (!editingAdmin.value && !value) callback(new Error('请选择部门')); else callback() }, trigger: 'change' }],
 }
 const employmentLabels: Record<EmploymentType, string> = { full_time: '全职', part_time: '兼职', contract: '合同制', intern: '实习' }
+const eventLabels: Record<string, string> = { hire: '入职', transfer: '部门异动', promotion: '职务调整', departure: '离职', enable: '账号启用', disable: '账号停用' }
 
 function employeeNo(value: number) { return String(value).padStart(6, '0') }
 
@@ -67,8 +72,16 @@ function edit(item: Employee) {
     username: item.username, displayName: item.displayName, email: item.email, phone: item.phone,
     departmentId: item.departmentId, title: item.title, employmentType: item.employmentType || 'full_time',
     hireDate: item.hireDate || '', probationEndDate: item.probationEndDate || '', workLocation: item.workLocation || '',
+    emergencyContactName: item.emergencyContactName || '', emergencyContactPhone: item.emergencyContactPhone || '', emergencyContactRelation: item.emergencyContactRelation || '',
   })
   dialogVisible.value = true
+}
+
+async function viewHistory(item: Employee) {
+  historyEmployee.value = item
+  historyOpen.value = true
+  historyLoading.value = true
+  try { history.value = await peopleApi.employmentEvents(item.id) } catch (error) { ElMessage.error(apiMessage(error, '员工履历加载失败')) } finally { historyLoading.value = false }
 }
 
 async function save() {
@@ -143,8 +156,9 @@ onMounted(() => {
       <el-table-column prop="workLocation" label="工作地点" min-width="120"><template #default="{ row }">{{ row.workLocation || '-' }}</template></el-table-column>
       <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.status === 'enabled' ? 'success' : 'info'" effect="plain">{{ row.status === 'enabled' ? '在职' : '停用' }}</el-tag></template></el-table-column>
       <el-table-column label="密码" width="90"><template #default="{ row }"><span :class="row.mustChangePassword ? 'pending' : 'ready'">{{ row.mustChangePassword ? '待设置' : '正常' }}</span></template></el-table-column>
-      <el-table-column v-if="canManage || canReset || canDisable" label="操作" width="176" fixed="right">
+      <el-table-column label="操作" width="210" fixed="right">
         <template #default="{ row }">
+          <el-tooltip content="任职履历"><el-button link :icon="Clock" aria-label="任职履历" @click="viewHistory(row)" /></el-tooltip>
           <el-tooltip v-if="canManage" content="编辑资料"><el-button link :icon="Edit" aria-label="编辑资料" @click="edit(row)" /></el-tooltip>
           <el-tooltip v-if="canReset" content="重置密码"><el-button link :icon="Key" aria-label="重置密码" :disabled="row.username === 'admin'" @click="resetPassword(row)" /></el-tooltip>
           <el-tooltip v-if="canDisable" :content="row.status === 'enabled' ? '停用账号' : '启用账号'"><el-button link :type="row.status === 'enabled' ? 'warning' : 'success'" :icon="SwitchButton" :aria-label="row.status === 'enabled' ? '停用账号' : '启用账号'" :disabled="row.username === 'admin' || row.id === auth.state.user?.id" @click="toggleEnabled(row)" /></el-tooltip>
@@ -166,8 +180,15 @@ onMounted(() => {
         <el-form-item label="工作地点"><el-input v-model="form.workLocation" /></el-form-item>
         <el-form-item label="入职日期"><el-date-picker v-model="form.hireDate" type="date" value-format="YYYY-MM-DD" class="full-width" /></el-form-item>
         <el-form-item label="试用期结束"><el-date-picker v-model="form.probationEndDate" type="date" value-format="YYYY-MM-DD" class="full-width" /></el-form-item>
+        <el-form-item label="紧急联系人"><el-input v-model="form.emergencyContactName" /></el-form-item>
+        <el-form-item label="与本人关系"><el-input v-model="form.emergencyContactRelation" /></el-form-item>
+        <el-form-item label="紧急联系电话"><el-input v-model="form.emergencyContactPhone" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="dialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="save">保存</el-button></template>
     </el-dialog>
+
+    <el-drawer v-model="historyOpen" :title="`${historyEmployee?.displayName || ''} · 任职履历`" size="min(560px, 100vw)">
+      <div v-loading="historyLoading"><el-timeline v-if="history.length"><el-timeline-item v-for="event in history" :key="event.id" :timestamp="event.effectiveDate" placement="top"><strong>{{ eventLabels[event.type] || event.type }}</strong><p>{{ event.note || '-' }}</p><small v-if="event.fromDepartment || event.toDepartment">{{ [event.fromDepartment, event.toDepartment].filter(Boolean).join(' → ') }}</small><small v-if="event.fromTitle || event.toTitle">{{ [event.fromTitle, event.toTitle].filter(Boolean).join(' → ') }}</small></el-timeline-item></el-timeline><el-empty v-else :image-size="64" description="暂无履历记录" /></div>
+    </el-drawer>
   </div>
 </template>

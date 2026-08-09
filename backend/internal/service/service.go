@@ -50,19 +50,27 @@ type permissionCacheEntry struct {
 }
 
 const (
-	PermissionEmployeeView     = "people.employee:view"
-	PermissionEmployeeManage   = "people.employee:manage"
-	PermissionEmployeeReset    = "people.employee:reset"
-	PermissionEmployeeDisable  = "people.employee:disable"
-	PermissionDepartmentManage = "people.department:manage"
-	PermissionDepartureView    = "people.departure:view"
-	PermissionDepartureReview  = "people.departure:review"
-	PermissionDashboardView    = "people.dashboard:view"
+	PermissionEmployeeView      = "people.employee:view"
+	PermissionEmployeeManage    = "people.employee:manage"
+	PermissionEmployeeReset     = "people.employee:reset"
+	PermissionEmployeeDisable   = "people.employee:disable"
+	PermissionDepartmentManage  = "people.department:manage"
+	PermissionDepartureView     = "people.departure:view"
+	PermissionDepartureReview   = "people.departure:review"
+	PermissionApprovalView      = "people.approval:view"
+	PermissionApprovalReview    = "people.approval:review"
+	PermissionContractView      = "people.contract:view"
+	PermissionContractManage    = "people.contract:manage"
+	PermissionPerformanceView   = "people.performance:view"
+	PermissionPerformanceManage = "people.performance:manage"
+	PermissionDashboardView     = "people.dashboard:view"
 )
 
 var elevatedPermissions = []string{
 	PermissionEmployeeView, PermissionEmployeeManage, PermissionEmployeeReset, PermissionEmployeeDisable,
 	PermissionDepartmentManage, PermissionDepartureView, PermissionDepartureReview, PermissionDashboardView,
+	PermissionApprovalView, PermissionApprovalReview, PermissionContractView, PermissionContractManage,
+	PermissionPerformanceView, PermissionPerformanceManage,
 }
 
 type Authorizer interface {
@@ -70,18 +78,21 @@ type Authorizer interface {
 }
 
 type EmployeeInput struct {
-	Username         string `json:"username"`
-	DisplayName      string `json:"displayName"`
-	Email            string `json:"email"`
-	Phone            string `json:"phone"`
-	DepartmentID     string `json:"departmentId"`
-	Title            string `json:"title"`
-	EmploymentType   string `json:"employmentType"`
-	HireDate         string `json:"hireDate"`
-	ProbationEndDate string `json:"probationEndDate"`
-	WorkLocation     string `json:"workLocation"`
-	Role             string `json:"role"`
-	Status           string `json:"status"`
+	Username                 string `json:"username"`
+	DisplayName              string `json:"displayName"`
+	Email                    string `json:"email"`
+	Phone                    string `json:"phone"`
+	DepartmentID             string `json:"departmentId"`
+	Title                    string `json:"title"`
+	EmploymentType           string `json:"employmentType"`
+	HireDate                 string `json:"hireDate"`
+	ProbationEndDate         string `json:"probationEndDate"`
+	WorkLocation             string `json:"workLocation"`
+	EmergencyContactName     string `json:"emergencyContactName"`
+	EmergencyContactPhone    string `json:"emergencyContactPhone"`
+	EmergencyContactRelation string `json:"emergencyContactRelation"`
+	Role                     string `json:"role"`
+	Status                   string `json:"status"`
 }
 
 type DepartmentInput struct {
@@ -310,13 +321,24 @@ func (s *Service) CreateEmployee(input EmployeeInput) (*model.Employee, error) {
 		DisplayName: normalized.DisplayName, Email: normalized.Email, Phone: normalized.Phone,
 		Title: normalized.Title, EmploymentType: normalized.EmploymentType, HireDate: normalized.HireDate,
 		ProbationEndDate: normalized.ProbationEndDate, WorkLocation: normalized.WorkLocation, Role: normalized.Role,
-		Status: normalized.Status, MustChangePassword: true,
+		EmergencyContactName: normalized.EmergencyContactName, EmergencyContactPhone: normalized.EmergencyContactPhone,
+		EmergencyContactRelation: normalized.EmergencyContactRelation,
+		Status:                   normalized.Status, MustChangePassword: true,
 	}
 	if department != nil {
 		employee.DepartmentID = department.ID
 		employee.Department = department.Name
 	}
-	if err := s.store.DB.Create(&employee).Error; err != nil {
+	if err := s.store.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&employee).Error; err != nil {
+			return err
+		}
+		effectiveDate := employee.HireDate
+		if effectiveDate == "" {
+			effectiveDate = time.Now().UTC().Format("2006-01-02")
+		}
+		return createEmploymentEvent(tx, employee, model.EmploymentEventHire, effectiveDate, "", "", employee.DepartmentID, employee.Department, "", employee.Title, "员工加入组织", "")
+	}); err != nil {
 		return nil, err
 	}
 	return &employee, nil
@@ -362,14 +384,27 @@ func (s *Service) UpdateEmployee(publicID string, input EmployeeInput) (*model.E
 	if department != nil {
 		departmentID, departmentName = department.ID, department.Name
 	}
-	if err := s.store.DB.Model(&employee).Updates(map[string]any{
-		"username":     normalized.Username,
-		"display_name": normalized.DisplayName, "email": normalized.Email, "phone": normalized.Phone,
-		"department_id": departmentID, "department": departmentName,
-		"title": normalized.Title, "employment_type": normalized.EmploymentType, "hire_date": normalized.HireDate,
-		"probation_end_date": normalized.ProbationEndDate, "work_location": normalized.WorkLocation,
-		"role": normalized.Role, "status": normalized.Status,
-	}).Error; err != nil {
+	departmentChanged, titleChanged := employee.DepartmentID != departmentID, employee.Title != normalized.Title
+	if err := s.store.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&employee).Updates(map[string]any{
+			"username": normalized.Username, "display_name": normalized.DisplayName, "email": normalized.Email, "phone": normalized.Phone,
+			"department_id": departmentID, "department": departmentName, "title": normalized.Title,
+			"employment_type": normalized.EmploymentType, "hire_date": normalized.HireDate,
+			"probation_end_date": normalized.ProbationEndDate, "work_location": normalized.WorkLocation,
+			"emergency_contact_name": normalized.EmergencyContactName, "emergency_contact_phone": normalized.EmergencyContactPhone,
+			"emergency_contact_relation": normalized.EmergencyContactRelation, "role": normalized.Role, "status": normalized.Status,
+		}).Error; err != nil {
+			return err
+		}
+		if !departmentChanged && !titleChanged {
+			return nil
+		}
+		eventType := model.EmploymentEventPromotion
+		if departmentChanged {
+			eventType = model.EmploymentEventTransfer
+		}
+		return createEmploymentEvent(tx, employee, eventType, time.Now().UTC().Format("2006-01-02"), employee.DepartmentID, employee.Department, departmentID, departmentName, employee.Title, normalized.Title, "HR 直接调整员工任职信息", "")
+	}); err != nil {
 		return nil, err
 	}
 	return &employee, s.store.DB.Where("id = ?", employee.ID).First(&employee).Error
@@ -715,6 +750,9 @@ func normalizeEmployee(input EmployeeInput) (EmployeeInput, error) {
 	input.HireDate = strings.TrimSpace(input.HireDate)
 	input.ProbationEndDate = strings.TrimSpace(input.ProbationEndDate)
 	input.WorkLocation = strings.TrimSpace(input.WorkLocation)
+	input.EmergencyContactName = strings.TrimSpace(input.EmergencyContactName)
+	input.EmergencyContactPhone = strings.TrimSpace(input.EmergencyContactPhone)
+	input.EmergencyContactRelation = strings.TrimSpace(input.EmergencyContactRelation)
 	input.Role = strings.ToLower(strings.TrimSpace(input.Role))
 	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
 	if !usernamePattern.MatchString(input.Username) || input.DisplayName == "" || len(input.DisplayName) > 100 {
@@ -750,7 +788,7 @@ func normalizeEmployee(input EmployeeInput) (EmployeeInput, error) {
 	if input.HireDate != "" && input.ProbationEndDate != "" && input.ProbationEndDate < input.HireDate {
 		return input, fmt.Errorf("%w: 试用期结束日期不能早于入职日期", ErrInvalid)
 	}
-	if len(input.Email) > 255 || len(input.Phone) > 32 || len(input.DepartmentID) > 40 || len(input.Title) > 100 || len(input.WorkLocation) > 100 {
+	if len(input.Email) > 255 || len(input.Phone) > 32 || len(input.DepartmentID) > 40 || len(input.Title) > 100 || len(input.WorkLocation) > 100 || len([]rune(input.EmergencyContactName)) > 100 || len(input.EmergencyContactPhone) > 32 || len([]rune(input.EmergencyContactRelation)) > 50 {
 		return input, fmt.Errorf("%w: 员工资料过长", ErrInvalid)
 	}
 	return input, nil

@@ -28,13 +28,26 @@ type NotificationSummary struct {
 }
 
 type HRDashboard struct {
-	TotalEmployees     int64 `json:"totalEmployees"`
-	EnabledEmployees   int64 `json:"enabledEmployees"`
-	DisabledEmployees  int64 `json:"disabledEmployees"`
-	Departments        int64 `json:"departments"`
-	PendingDepartures  int64 `json:"pendingDepartures"`
-	ProbationEmployees int64 `json:"probationEmployees"`
-	RecentHires        int64 `json:"recentHires"`
+	TotalEmployees             int64          `json:"totalEmployees"`
+	EnabledEmployees           int64          `json:"enabledEmployees"`
+	DisabledEmployees          int64          `json:"disabledEmployees"`
+	Departments                int64          `json:"departments"`
+	PendingDepartures          int64          `json:"pendingDepartures"`
+	PendingApprovals           int64          `json:"pendingApprovals"`
+	ProbationEmployees         int64          `json:"probationEmployees"`
+	RecentHires                int64          `json:"recentHires"`
+	EmployeesOnLeave           int64          `json:"employeesOnLeave"`
+	ContractsExpiring          int64          `json:"contractsExpiring"`
+	ActiveGoals                int64          `json:"activeGoals"`
+	OverdueGoals               int64          `json:"overdueGoals"`
+	DepartmentDistribution     []MetricBucket `json:"departmentDistribution"`
+	EmploymentTypeDistribution []MetricBucket `json:"employmentTypeDistribution"`
+	ApprovalDistribution       []MetricBucket `json:"approvalDistribution"`
+}
+
+type MetricBucket struct {
+	Name  string `json:"name"`
+	Count int64  `json:"count"`
 }
 
 func (s *Service) ResetEmployeePassword(publicID string) error {
@@ -84,6 +97,13 @@ func (s *Service) SetEmployeeEnabled(publicID string, enabled bool) (*model.Empl
 		if err := tx.Model(&employee).Update("status", status).Error; err != nil {
 			return err
 		}
+		eventType, note := model.EmploymentEventDisable, "HR 停用员工账号"
+		if enabled {
+			eventType, note = model.EmploymentEventEnable, "HR 恢复员工账号"
+		}
+		if err := createEmploymentEvent(tx, employee, eventType, now.Format("2006-01-02"), employee.DepartmentID, employee.Department, employee.DepartmentID, employee.Department, employee.Title, employee.Title, note, ""); err != nil {
+			return err
+		}
 		if enabled {
 			return nil
 		}
@@ -96,7 +116,12 @@ func (s *Service) SetEmployeeEnabled(publicID string, enabled bool) (*model.Empl
 }
 
 func (s *Service) Dashboard() (HRDashboard, error) {
-	result := HRDashboard{}
+	result := HRDashboard{
+		DepartmentDistribution:     []MetricBucket{},
+		EmploymentTypeDistribution: []MetricBucket{},
+		ApprovalDistribution:       []MetricBucket{},
+	}
+	today := time.Now().UTC().Format("2006-01-02")
 	queries := []struct {
 		model any
 		where string
@@ -107,9 +132,14 @@ func (s *Service) Dashboard() (HRDashboard, error) {
 		{&model.Employee{}, "status = ?", []any{model.StatusEnabled}, &result.EnabledEmployees},
 		{&model.Employee{}, "status = ?", []any{model.StatusDisabled}, &result.DisabledEmployees},
 		{&model.Department{}, "status = ?", []any{model.StatusEnabled}, &result.Departments},
-		{&model.DepartureRequest{}, "status IN ?", []any{[]string{model.DeparturePendingManager, model.DeparturePendingHR}}, &result.PendingDepartures},
-		{&model.Employee{}, "status = ? AND probation_end_date >= ?", []any{model.StatusEnabled, time.Now().UTC().Format("2006-01-02")}, &result.ProbationEmployees},
+		{&model.ApprovalRequest{}, "type = ? AND status = ?", []any{model.ApprovalTypeDeparture, model.ApprovalPending}, &result.PendingDepartures},
+		{&model.ApprovalRequest{}, "status = ?", []any{model.ApprovalPending}, &result.PendingApprovals},
+		{&model.Employee{}, "status = ? AND probation_end_date >= ?", []any{model.StatusEnabled, today}, &result.ProbationEmployees},
 		{&model.Employee{}, "hire_date >= ?", []any{time.Now().UTC().AddDate(0, 0, -30).Format("2006-01-02")}, &result.RecentHires},
+		{&model.LeaveRecord{}, "status = ? AND start_date <= ? AND end_date >= ?", []any{model.ApprovalApproved, today, today}, &result.EmployeesOnLeave},
+		{&model.EmployeeContract{}, "status = ? AND end_date <> '' AND end_date BETWEEN ? AND ?", []any{"active", today, time.Now().UTC().AddDate(0, 2, 0).Format("2006-01-02")}, &result.ContractsExpiring},
+		{&model.PerformanceGoal{}, "status = ?", []any{"active"}, &result.ActiveGoals},
+		{&model.PerformanceGoal{}, "status = ? AND progress < 100 AND due_date < ?", []any{"active", today}, &result.OverdueGoals},
 	}
 	for _, item := range queries {
 		query := s.store.DB.Model(item.model)
@@ -120,48 +150,28 @@ func (s *Service) Dashboard() (HRDashboard, error) {
 			return HRDashboard{}, err
 		}
 	}
+	groupQueries := []struct {
+		query *gorm.DB
+		value *[]MetricBucket
+	}{
+		{s.store.DB.Model(&model.Employee{}).Select("COALESCE(NULLIF(department, ''), '未分配') AS name, COUNT(*) AS count").Where("status = ?", model.StatusEnabled).Group("department").Order("count DESC"), &result.DepartmentDistribution},
+		{s.store.DB.Model(&model.Employee{}).Select("employment_type AS name, COUNT(*) AS count").Where("status = ?", model.StatusEnabled).Group("employment_type").Order("count DESC"), &result.EmploymentTypeDistribution},
+		{s.store.DB.Model(&model.ApprovalRequest{}).Select("type AS name, COUNT(*) AS count").Where("status = ?", model.ApprovalPending).Group("type").Order("count DESC"), &result.ApprovalDistribution},
+	}
+	for _, item := range groupQueries {
+		if err := item.query.Scan(item.value).Error; err != nil {
+			return HRDashboard{}, err
+		}
+	}
 	return result, nil
 }
 
 func (s *Service) CreateDeparture(employee *model.Employee, input DepartureInput) (*model.DepartureRequest, error) {
-	if employee == nil || employee.Role == model.RoleAdmin || employee.Status != model.StatusEnabled {
-		return nil, fmt.Errorf("%w: 管理员或停用账号不能发起离职", ErrForbidden)
-	}
-	reason := strings.TrimSpace(input.Reason)
-	lastWorkingDate := strings.TrimSpace(input.LastWorkingDate)
-	date, err := time.Parse("2006-01-02", lastWorkingDate)
-	if reason == "" || len(reason) > 1000 || err != nil {
-		return nil, fmt.Errorf("%w: 离职原因和最后工作日不能为空", ErrInvalid)
-	}
-	if date.Before(time.Now().UTC().Truncate(24 * time.Hour)) {
-		return nil, fmt.Errorf("%w: 最后工作日不能早于今天", ErrInvalid)
-	}
-	var department model.Department
-	if employee.DepartmentID == "" || s.store.DB.Where("id = ? AND status = ?", employee.DepartmentID, model.StatusEnabled).First(&department).Error != nil {
-		return nil, fmt.Errorf("%w: 所在部门不存在或已停用", ErrInvalid)
-	}
-	approverID, err := s.departureApprover(employee, department)
+	request, err := s.CreateApproval(employee, ApprovalInput{Type: model.ApprovalTypeDeparture, Data: map[string]any{"reason": input.Reason, "lastWorkingDate": input.LastWorkingDate}})
 	if err != nil {
 		return nil, err
 	}
-	var active int64
-	if err := s.store.DB.Model(&model.DepartureRequest{}).Where("employee_id = ? AND status IN ?", employee.ID, []string{model.DeparturePendingManager, model.DeparturePendingHR}).Count(&active).Error; err != nil {
-		return nil, err
-	}
-	if active > 0 {
-		return nil, fmt.Errorf("%w: 已存在待审批的离职申请", ErrConflict)
-	}
-	id, err := randomToken("dpr_", 18)
-	if err != nil {
-		return nil, err
-	}
-	request := model.DepartureRequest{
-		ID: id, EmployeeID: employee.ID, EmployeePublicID: employee.PublicID, EmployeeName: employee.DisplayName,
-		EmployeeNo: employee.EmployeeNo, DepartmentID: department.ID, DepartmentName: department.Name,
-		DepartmentLeaderID: approverID, Reason: reason, LastWorkingDate: lastWorkingDate,
-		Status: model.DeparturePendingManager,
-	}
-	return &request, s.store.DB.Create(&request).Error
+	return approvalToDeparture(request), nil
 }
 
 func (s *Service) departureApprover(employee *model.Employee, department model.Department) (string, error) {
@@ -188,124 +198,66 @@ func (s *Service) departureApprover(employee *model.Employee, department model.D
 }
 
 func (s *Service) ListDepartures(actor *model.Employee, canHR bool) ([]model.DepartureRequest, error) {
-	if actor == nil {
-		return nil, ErrUnauthorized
-	}
-	query := s.store.DB.Model(&model.DepartureRequest{})
-	if !canHR {
-		query = query.Where("employee_public_id = ? OR department_leader_id = ?", actor.PublicID, actor.PublicID)
-	}
-	var items []model.DepartureRequest
-	if err := query.Order("created_at DESC").Find(&items).Error; err != nil {
+	requests, err := s.ListApprovals(actor, ApprovalFilter{Type: model.ApprovalTypeDeparture}, canHR, canHR)
+	if err != nil {
 		return nil, err
 	}
-	for index := range items {
-		items[index].CanManagerReview = items[index].Status == model.DeparturePendingManager && items[index].DepartmentLeaderID == actor.PublicID
-		items[index].CanHRReview = items[index].Status == model.DeparturePendingHR && canHR
-		items[index].CanCancel = items[index].EmployeePublicID == actor.PublicID && items[index].Status == model.DeparturePendingManager
+	items := make([]model.DepartureRequest, 0, len(requests))
+	for index := range requests {
+		items = append(items, *approvalToDeparture(&requests[index]))
 	}
 	return items, nil
 }
 
 func (s *Service) ReviewDeparture(actor *model.Employee, id, stage string, input ReviewInput, canHR bool) (*model.DepartureRequest, error) {
-	if actor == nil {
-		return nil, ErrUnauthorized
-	}
-	comment := strings.TrimSpace(input.Comment)
-	if len(comment) > 500 {
-		return nil, fmt.Errorf("%w: 审批意见过长", ErrInvalid)
-	}
-	var result model.DepartureRequest
-	err := s.store.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("id = ?", strings.TrimSpace(id)).First(&result).Error; errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrNotFound
-		} else if err != nil {
-			return err
-		}
-		now := time.Now().UTC()
-		switch stage {
-		case "manager":
-			if result.Status != model.DeparturePendingManager {
-				return fmt.Errorf("%w: 当前状态不能进行负责人审批", ErrConflict)
-			}
-			if result.DepartmentLeaderID != actor.PublicID {
-				return ErrForbidden
-			}
-			status := model.DepartureRejected
-			if input.Approved {
-				status = model.DeparturePendingHR
-			}
-			if err := tx.Model(&result).Updates(map[string]any{
-				"status": status, "manager_reviewer_id": actor.PublicID, "manager_reviewer_name": actor.DisplayName,
-				"manager_review_comment": comment, "manager_reviewed_at": now,
-			}).Error; err != nil {
-				return err
-			}
-			if !input.Approved {
-				return createNotification(tx, result.EmployeePublicID, "departure_result", "离职申请已驳回", "部门负责人驳回了你的离职申请", "departure", result.ID)
-			}
-		case "hr":
-			if !canHR {
-				return ErrForbidden
-			}
-			if result.EmployeePublicID == actor.PublicID {
-				return fmt.Errorf("%w: 不能审批自己的离职申请", ErrForbidden)
-			}
-			if result.Status != model.DeparturePendingHR {
-				return fmt.Errorf("%w: 当前状态不能进行 HR 审批", ErrConflict)
-			}
-			status := model.DepartureRejected
-			if input.Approved {
-				status = model.DepartureApproved
-			}
-			if err := tx.Model(&result).Updates(map[string]any{
-				"status": status, "hr_reviewer_id": actor.PublicID, "hr_reviewer_name": actor.DisplayName,
-				"hr_review_comment": comment, "hr_reviewed_at": now,
-			}).Error; err != nil {
-				return err
-			}
-			if input.Approved {
-				if err := tx.Model(&model.Employee{}).Where("id = ?", result.EmployeeID).Update("status", model.StatusDisabled).Error; err != nil {
-					return err
-				}
-				if err := tx.Model(&model.Session{}).Where("employee_id = ? AND revoked_at IS NULL", result.EmployeeID).Update("revoked_at", now).Error; err != nil {
-					return err
-				}
-				if err := tx.Where("employee_id = ?", result.EmployeeID).Delete(&model.OAuthToken{}).Error; err != nil {
-					return err
-				}
-			}
-			title, content := "离职申请已驳回", "HR 驳回了你的离职申请"
-			if input.Approved {
-				title, content = "离职申请已通过", "离职申请审批完成，账号已停止使用"
-			}
-			return createNotification(tx, result.EmployeePublicID, "departure_result", title, content, "departure", result.ID)
-		default:
-			return fmt.Errorf("%w: 审批阶段无效", ErrInvalid)
-		}
-		return nil
-	})
+	request, err := s.approvalByID(id, actor, canHR)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.store.DB.Where("id = ?", result.ID).First(&result).Error; err != nil {
+	if request.Type != model.ApprovalTypeDeparture || (stage == "manager" && request.CurrentStep != 1) || (stage == "hr" && request.CurrentStep != 2) || (stage != "manager" && stage != "hr") {
+		return nil, fmt.Errorf("%w: 审批阶段无效", ErrConflict)
+	}
+	request, err = s.ReviewApproval(actor, id, input, canHR)
+	if err != nil {
 		return nil, err
 	}
-	return &result, nil
+	return approvalToDeparture(request), nil
 }
 
 func (s *Service) CancelDeparture(actor *model.Employee, id string) error {
-	if actor == nil {
-		return ErrUnauthorized
+	return s.CancelApproval(actor, id)
+}
+
+func approvalToDeparture(request *model.ApprovalRequest) *model.DepartureRequest {
+	status := model.DeparturePendingManager
+	if request.Status == model.ApprovalApproved {
+		status = model.DepartureApproved
+	} else if request.Status == model.ApprovalRejected {
+		status = model.DepartureRejected
+	} else if request.Status == model.ApprovalCancelled {
+		status = model.DepartureCancelled
+	} else if request.CurrentStep > 1 {
+		status = model.DeparturePendingHR
 	}
-	result := s.store.DB.Model(&model.DepartureRequest{}).Where("id = ? AND employee_id = ? AND status = ?", id, actor.ID, model.DeparturePendingManager).Update("status", model.DepartureCancelled)
-	if result.Error != nil {
-		return result.Error
+	result := &model.DepartureRequest{
+		ID: request.ID, EmployeeID: request.ApplicantID, EmployeePublicID: request.ApplicantPublicID,
+		EmployeeName: request.ApplicantName, EmployeeNo: request.ApplicantNo, DepartmentID: request.DepartmentID,
+		DepartmentName: request.DepartmentName, Reason: dataString(request.Data, "reason"), LastWorkingDate: dataString(request.Data, "lastWorkingDate"),
+		Status: status, CanManagerReview: request.CanReview && request.CurrentStep == 1,
+		CanHRReview: request.CanReview && request.CurrentStep == 2, CanCancel: request.CanCancel,
+		CreatedAt: request.CreatedAt, UpdatedAt: request.UpdatedAt,
 	}
-	if result.RowsAffected != 1 {
-		return fmt.Errorf("%w: 当前申请不能撤回", ErrConflict)
+	for _, step := range request.Steps {
+		if step.Sequence == 1 {
+			result.DepartmentLeaderID = step.ApproverID
+			result.ManagerReviewerID, result.ManagerReviewerName = step.ReviewerID, step.ReviewerName
+			result.ManagerReviewComment, result.ManagerReviewedAt = step.Comment, step.ReviewedAt
+		} else if step.Sequence == 2 {
+			result.HRReviewerID, result.HRReviewerName = step.ReviewerID, step.ReviewerName
+			result.HRReviewComment, result.HRReviewedAt = step.Comment, step.ReviewedAt
+		}
 	}
-	return nil
+	return result
 }
 
 func (s *Service) ListNotifications(recipientID string, unreadOnly bool) ([]model.Notification, error) {
@@ -325,11 +277,13 @@ func (s *Service) NotificationSummary(actor *model.Employee, canHR bool) (Notifi
 	if err := s.store.DB.Model(&model.Notification{}).Where("recipient_id = ? AND read_at IS NULL", actor.PublicID).Count(&result.Unread).Error; err != nil {
 		return result, err
 	}
-	pending := s.store.DB.Model(&model.DepartureRequest{})
+	pending := s.store.DB.Model(&model.ApprovalStep{}).
+		Joins("JOIN approval_requests ON approval_requests.id = approval_steps.approval_id").
+		Where("approval_steps.status = ? AND approval_requests.status = ?", model.ApprovalStepPending, model.ApprovalPending)
 	if canHR {
-		pending = pending.Where("status = ? OR (status = ? AND department_leader_id = ?)", model.DeparturePendingHR, model.DeparturePendingManager, actor.PublicID)
+		pending = pending.Where("approval_steps.approver_id = ? OR (approval_steps.permission_code = ? AND approval_requests.applicant_public_id <> ?)", actor.PublicID, PermissionApprovalReview, actor.PublicID)
 	} else {
-		pending = pending.Where("status = ? AND department_leader_id = ?", model.DeparturePendingManager, actor.PublicID)
+		pending = pending.Where("approval_steps.approver_id = ?", actor.PublicID)
 	}
 	if err := pending.Count(&result.PendingTasks).Error; err != nil {
 		return result, err

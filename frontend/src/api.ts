@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Department, DepartmentInput, DepartureRequest, Employee, EmployeeInput, HRDashboard, NotificationItem, NotificationSummary, Page } from '@/types'
+import type { ApprovalRequest, ApprovalType, ApprovalTypeDefinition, ContractInput, Department, DepartmentInput, DepartureRequest, Employee, EmployeeContract, EmployeeInput, EmploymentEvent, GoalInput, HRDashboard, LeaveBalance, LeaveRecord, NotificationItem, NotificationSummary, Page, PerformanceGoal } from '@/types'
 
 interface Envelope<T> {
   code: string
@@ -49,17 +49,34 @@ export const peopleApi = {
   logout: () => mutation<{ loggedOut: boolean }>(() => client.post('/auth/logout')),
   changePassword: (currentPassword: string, newPassword: string) =>
     mutation<Employee>(() => client.post('/auth/change-password', { currentPassword, newPassword })),
+  updateMyProfile: (input: Pick<EmployeeInput, 'email' | 'phone' | 'emergencyContactName' | 'emergencyContactPhone' | 'emergencyContactRelation'>) => mutation<Employee>(() => client.put('/profile', input)),
   employees: (params: { q?: string; page: number; pageSize: number }) => unwrap<Page<Employee>>(client.get('/employees', { params })),
   createEmployee: (input: EmployeeInput) => mutation<Employee>(() => client.post('/employees', input)),
   updateEmployee: (id: string, input: EmployeeInput) => mutation<Employee>(() => client.put(`/employees/${id}`, input)),
   deleteEmployee: (id: string) => mutation<{ deleted: boolean }>(() => client.delete(`/employees/${id}`)),
   resetEmployeePassword: (id: string) => mutation<{ reset: boolean }>(() => client.post(`/employees/${id}/reset-password`)),
   setEmployeeEnabled: (id: string, enabled: boolean) => mutation<Employee>(() => client.put(`/employees/${id}/enabled`, { enabled })),
+  employmentEvents: (id: string) => unwrap<EmploymentEvent[]>(client.get(`/employees/${id}/events`)),
   departments: (params?: { q?: string }) => unwrap<Department[]>(client.get('/departments', { params })),
   createDepartment: (input: DepartmentInput) => mutation<Department>(() => client.post('/departments', input)),
   updateDepartment: (id: string, input: DepartmentInput) => mutation<Department>(() => client.put(`/departments/${id}`, input)),
   deleteDepartment: (id: string) => mutation<{ deleted: boolean }>(() => client.delete(`/departments/${id}`)),
   dashboard: () => unwrap<HRDashboard>(client.get('/hr/dashboard')),
+  approvalTypes: () => unwrap<ApprovalTypeDefinition[]>(client.get('/approval-types')),
+  approvals: (params?: { scope?: 'mine' | 'pending' | 'all'; type?: ApprovalType | ''; status?: string }) => unwrap<ApprovalRequest[]>(client.get('/approvals', { params })),
+  approval: (id: string) => unwrap<ApprovalRequest>(client.get(`/approvals/${id}`)),
+  createApproval: (input: { type: ApprovalType; data: Record<string, string> }) => mutation<ApprovalRequest>(() => client.post('/approvals', input)),
+  reviewApproval: (id: string, input: { approved: boolean; comment: string }) => mutation<ApprovalRequest>(() => client.post(`/approvals/${id}/review`, input)),
+  cancelApproval: (id: string) => mutation<{ cancelled: boolean }>(() => client.post(`/approvals/${id}/cancel`)),
+  leaveBalance: (year?: number) => unwrap<LeaveBalance>(client.get('/leave/balance', { params: { year } })),
+  leaveCalendar: (month?: string) => unwrap<LeaveRecord[]>(client.get('/leave/calendar', { params: { month } })),
+  contracts: (employeeId?: string) => unwrap<EmployeeContract[]>(client.get('/contracts', { params: { employeeId } })),
+  createContract: (employeeId: string, input: ContractInput) => mutation<EmployeeContract>(() => client.post(`/employees/${employeeId}/contracts`, input)),
+  updateContract: (id: string, input: ContractInput) => mutation<EmployeeContract>(() => client.put(`/contracts/${id}`, input)),
+  deleteContract: (id: string) => mutation<{ deleted: boolean }>(() => client.delete(`/contracts/${id}`)),
+  goals: (cycle?: string) => unwrap<PerformanceGoal[]>(client.get('/performance-goals', { params: { cycle } })),
+  createGoal: (input: GoalInput) => mutation<PerformanceGoal>(() => client.post('/performance-goals', input)),
+  updateGoal: (id: string, input: GoalInput) => mutation<PerformanceGoal>(() => client.put(`/performance-goals/${id}`, input)),
   departures: () => unwrap<DepartureRequest[]>(client.get('/departures')),
   createDeparture: (input: { reason: string; lastWorkingDate: string }) => mutation<DepartureRequest>(() => client.post('/departures', input)),
   reviewDeparture: (id: string, stage: 'manager' | 'hr', input: { approved: boolean; comment: string }) =>

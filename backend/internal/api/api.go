@@ -87,17 +87,34 @@ func NewServer(address string, verifier, innerVerifier *security.GatewayVerifier
 	api.GET("/auth/me", a.me)
 	api.POST("/auth/logout", a.requireCSRF(), a.logout)
 	api.POST("/auth/change-password", a.requireCSRF(), a.changePassword)
+	api.PUT("/profile", a.requireCSRF(), a.updateMyProfile)
 	api.GET("/employees", a.listEmployees)
 	api.POST("/employees", a.requireCSRF(), a.createEmployee)
 	api.PUT("/employees/:id", a.requireCSRF(), a.updateEmployee)
 	api.DELETE("/employees/:id", a.requireCSRF(), a.deleteEmployee)
 	api.POST("/employees/:id/reset-password", a.requireCSRF(), a.resetEmployeePassword)
 	api.PUT("/employees/:id/enabled", a.requireCSRF(), a.setEmployeeEnabled)
+	api.GET("/employees/:id/events", a.listEmploymentEvents)
 	api.GET("/departments", a.listDepartments)
 	api.POST("/departments", a.requireCSRF(), a.createDepartment)
 	api.PUT("/departments/:id", a.requireCSRF(), a.updateDepartment)
 	api.DELETE("/departments/:id", a.requireCSRF(), a.deleteDepartment)
 	api.GET("/hr/dashboard", a.hrDashboard)
+	api.GET("/approval-types", a.listApprovalTypes)
+	api.GET("/approvals", a.listApprovals)
+	api.POST("/approvals", a.requireCSRF(), a.createApproval)
+	api.GET("/approvals/:id", a.getApproval)
+	api.POST("/approvals/:id/review", a.requireCSRF(), a.reviewApproval)
+	api.POST("/approvals/:id/cancel", a.requireCSRF(), a.cancelApproval)
+	api.GET("/leave/balance", a.leaveBalance)
+	api.GET("/leave/calendar", a.leaveCalendar)
+	api.GET("/contracts", a.listContracts)
+	api.POST("/employees/:id/contracts", a.requireCSRF(), a.createContract)
+	api.PUT("/contracts/:id", a.requireCSRF(), a.updateContract)
+	api.DELETE("/contracts/:id", a.requireCSRF(), a.deleteContract)
+	api.GET("/performance-goals", a.listGoals)
+	api.POST("/performance-goals", a.requireCSRF(), a.createGoal)
+	api.PUT("/performance-goals/:id", a.requireCSRF(), a.updateGoal)
 	api.GET("/departures", a.listDepartures)
 	api.POST("/departures", a.requireCSRF(), a.createDeparture)
 	api.POST("/departures/:id/manager-review", a.requireCSRF(), a.reviewDeparture("manager"))
@@ -309,6 +326,33 @@ func (a *API) setEmployeeEnabled(_ context.Context, c *app.RequestContext) {
 	respond(c, result, err)
 }
 
+func (a *API) updateMyProfile(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	var request service.ProfileInput
+	if !bind(c, &request) {
+		return
+	}
+	result, err := a.service.UpdateMyProfile(employee, request)
+	respond(c, result, err)
+}
+
+func (a *API) listEmploymentEvents(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	publicID := c.Param("id")
+	if publicID != employee.PublicID && !a.service.HasPermission(employee, service.PermissionEmployeeView) {
+		handleError(c, service.ErrForbidden)
+		return
+	}
+	result, err := a.service.ListEmploymentEvents(publicID)
+	respond(c, result, err)
+}
+
 func (a *API) hrDashboard(_ context.Context, c *app.RequestContext) {
 	if _, _, valid := a.permissionSession(c, service.PermissionDashboardView); !valid {
 		return
@@ -317,12 +361,190 @@ func (a *API) hrDashboard(_ context.Context, c *app.RequestContext) {
 	respond(c, result, err)
 }
 
+func (a *API) listApprovalTypes(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.session(c, false); !valid {
+		return
+	}
+	ok(c, service.ApprovalTypes())
+}
+
+func (a *API) listApprovals(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	result, err := a.service.ListApprovals(employee, service.ApprovalFilter{
+		Scope: string(c.Query("scope")), Type: string(c.Query("type")), Status: string(c.Query("status")),
+	}, a.service.HasPermission(employee, service.PermissionApprovalView), a.service.HasPermission(employee, service.PermissionApprovalReview))
+	respond(c, result, err)
+}
+
+func (a *API) createApproval(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	var request service.ApprovalInput
+	if !bind(c, &request) {
+		return
+	}
+	result, err := a.service.CreateApproval(employee, request)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	created(c, result)
+}
+
+func (a *API) getApproval(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	result, err := a.service.GetApproval(employee, c.Param("id"), a.service.HasPermission(employee, service.PermissionApprovalView), a.service.HasPermission(employee, service.PermissionApprovalReview))
+	respond(c, result, err)
+}
+
+func (a *API) reviewApproval(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	var request service.ReviewInput
+	if !bind(c, &request) {
+		return
+	}
+	result, err := a.service.ReviewApproval(employee, c.Param("id"), request, a.service.HasPermission(employee, service.PermissionApprovalReview))
+	respond(c, result, err)
+}
+
+func (a *API) cancelApproval(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	if err := a.service.CancelApproval(employee, c.Param("id")); err != nil {
+		handleError(c, err)
+		return
+	}
+	ok(c, utils.H{"cancelled": true})
+}
+
+func (a *API) leaveBalance(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	result, err := a.service.GetLeaveBalance(employee, queryInt(c, "year", time.Now().UTC().Year()))
+	respond(c, result, err)
+}
+
+func (a *API) leaveCalendar(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	result, err := a.service.ListLeaveCalendar(employee, a.service.HasPermission(employee, service.PermissionApprovalView), string(c.Query("month")))
+	respond(c, result, err)
+}
+
+func (a *API) listContracts(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	canManage := a.service.HasPermission(employee, service.PermissionContractManage)
+	canView := canManage || a.service.HasPermission(employee, service.PermissionContractView)
+	result, err := a.service.ListContracts(employee, canView, string(c.Query("employeeId")))
+	respond(c, result, err)
+}
+
+func (a *API) createContract(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.permissionSession(c, service.PermissionContractManage); !valid {
+		return
+	}
+	var request service.ContractInput
+	if !bind(c, &request) {
+		return
+	}
+	result, err := a.service.CreateContract(c.Param("id"), request)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	created(c, result)
+}
+
+func (a *API) updateContract(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.permissionSession(c, service.PermissionContractManage); !valid {
+		return
+	}
+	var request service.ContractInput
+	if !bind(c, &request) {
+		return
+	}
+	result, err := a.service.UpdateContract(c.Param("id"), request)
+	respond(c, result, err)
+}
+
+func (a *API) deleteContract(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.permissionSession(c, service.PermissionContractManage); !valid {
+		return
+	}
+	if err := a.service.DeleteContract(c.Param("id")); err != nil {
+		handleError(c, err)
+		return
+	}
+	ok(c, utils.H{"deleted": true})
+}
+
+func (a *API) listGoals(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	canViewAll := a.service.HasPermission(employee, service.PermissionPerformanceView) || a.service.HasPermission(employee, service.PermissionPerformanceManage)
+	result, err := a.service.ListGoals(employee, canViewAll, string(c.Query("cycle")))
+	respond(c, result, err)
+}
+
+func (a *API) createGoal(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	var request service.GoalInput
+	if !bind(c, &request) {
+		return
+	}
+	result, err := a.service.CreateGoal(employee, request)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	created(c, result)
+}
+
+func (a *API) updateGoal(_ context.Context, c *app.RequestContext) {
+	employee, _, valid := a.session(c, false)
+	if !valid {
+		return
+	}
+	var request service.GoalInput
+	if !bind(c, &request) {
+		return
+	}
+	result, err := a.service.UpdateGoal(employee, c.Param("id"), request, a.service.HasPermission(employee, service.PermissionPerformanceManage))
+	respond(c, result, err)
+}
+
 func (a *API) listDepartures(_ context.Context, c *app.RequestContext) {
 	employee, _, valid := a.session(c, false)
 	if !valid {
 		return
 	}
-	result, err := a.service.ListDepartures(employee, a.service.HasPermission(employee, service.PermissionDepartureReview))
+	canReview := a.service.HasPermission(employee, service.PermissionDepartureReview) || a.service.HasPermission(employee, service.PermissionApprovalReview)
+	result, err := a.service.ListDepartures(employee, canReview)
 	respond(c, result, err)
 }
 
@@ -353,7 +575,8 @@ func (a *API) reviewDeparture(stage string) app.HandlerFunc {
 		if !bind(c, &request) {
 			return
 		}
-		result, err := a.service.ReviewDeparture(employee, c.Param("id"), stage, request, a.service.HasPermission(employee, service.PermissionDepartureReview))
+		canReview := a.service.HasPermission(employee, service.PermissionDepartureReview) || a.service.HasPermission(employee, service.PermissionApprovalReview)
+		result, err := a.service.ReviewDeparture(employee, c.Param("id"), stage, request, canReview)
 		respond(c, result, err)
 	}
 }
@@ -384,7 +607,8 @@ func (a *API) notificationSummary(_ context.Context, c *app.RequestContext) {
 	if !valid {
 		return
 	}
-	result, err := a.service.NotificationSummary(employee, a.service.HasPermission(employee, service.PermissionDepartureReview))
+	canReview := a.service.HasPermission(employee, service.PermissionDepartureReview) || a.service.HasPermission(employee, service.PermissionApprovalReview)
+	result, err := a.service.NotificationSummary(employee, canReview)
 	respond(c, result, err)
 }
 

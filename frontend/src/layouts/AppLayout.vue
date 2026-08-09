@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElNotification } from 'element-plus'
-import { Bell, DataAnalysis, DocumentChecked, OfficeBuilding, User, UserFilled, SwitchButton } from '@element-plus/icons-vue'
+import { Bell, Briefcase, DataAnalysis, DocumentChecked, OfficeBuilding, User, UserFilled, SwitchButton } from '@element-plus/icons-vue'
 import { auth } from '@/auth'
 import { apiMessage } from '@/api'
 import { peopleApi } from '@/api'
@@ -24,7 +24,7 @@ async function loadSummary() {
   try {
     const next = await peopleApi.notificationSummary()
     if (previousTotal !== null && next.total > previousTotal) {
-      ElNotification({ title: '有新的待办', message: '新的离职审批或处理结果需要关注', type: 'warning', duration: 6000 })
+      ElNotification({ title: '有新的待办', message: '新的审批任务或处理结果需要关注', type: 'warning', duration: 6000 })
     }
     previousTotal = next.total
     summary.value = next
@@ -77,8 +77,11 @@ async function logout() {
         <RouterLink v-if="auth.can('people.department:manage')" to="/departments" :class="{ active: route.path === '/departments' }">
           <el-icon><OfficeBuilding /></el-icon><span>部门管理</span>
         </RouterLink>
-        <RouterLink to="/departures" :class="{ active: route.path === '/departures' }">
-          <el-icon><DocumentChecked /></el-icon><span>离职审批</span>
+        <RouterLink to="/approvals" :class="{ active: route.path === '/approvals' }">
+          <el-icon><DocumentChecked /></el-icon><span>审批中心</span>
+        </RouterLink>
+        <RouterLink to="/operations" :class="{ active: route.path === '/operations' }">
+          <el-icon><Briefcase /></el-icon><span>人事运营</span>
         </RouterLink>
         <RouterLink to="/profile" :class="{ active: route.path === '/profile' }">
           <el-icon><User /></el-icon><span>个人资料</span>
@@ -99,8 +102,8 @@ async function logout() {
           </template>
           <div class="notification-panel">
             <header><strong>通知与待办</strong><el-button v-if="summary.unread" link type="primary" @click="readAll">全部已读</el-button></header>
-            <RouterLink v-if="summary.pendingTasks" to="/departures" class="task-notice">
-              <span>{{ summary.pendingTasks }} 项离职审批待处理</span><small>查看审批列表</small>
+            <RouterLink v-if="summary.pendingTasks" to="/approvals" class="task-notice">
+              <span>{{ summary.pendingTasks }} 项审批待处理</span><small>查看审批中心</small>
             </RouterLink>
             <div v-for="item in notifications" :key="item.id" class="notice-item"><strong>{{ item.title }}</strong><span>{{ item.content }}</span></div>
             <el-empty v-if="!summary.total" :image-size="54" description="暂无通知" />
