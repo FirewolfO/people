@@ -37,6 +37,7 @@ h1 { margin: 0; font-size: 26px; letter-spacing: 0; }
 .identity-cell { display: grid; gap: 3px; min-width: 0; }
 .identity-cell strong, .identity-cell small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .identity-cell small, .muted { color: #7b8581; }
+.tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .approval-toolbar { max-width: none; overflow-x: auto; }
 .approval-filters { align-items: center; max-width: none; overflow-x: auto; }
 .approval-filters .el-select { width: 150px; flex: 0 0 auto; }

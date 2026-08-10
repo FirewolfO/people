@@ -83,7 +83,7 @@ type EmployeeInput struct {
 	Email                    string `json:"email"`
 	Phone                    string `json:"phone"`
 	DepartmentID             string `json:"departmentId"`
-	Title                    string `json:"title"`
+	PositionID               string `json:"positionId"`
 	EmploymentType           string `json:"employmentType"`
 	HireDate                 string `json:"hireDate"`
 	ProbationEndDate         string `json:"probationEndDate"`
@@ -268,9 +268,9 @@ func (s *Service) ListEmployees(search string, page, pageSize int) (Page, error)
 	if value := strings.TrimSpace(search); value != "" {
 		like := "%" + value + "%"
 		if employeeNo, err := strconv.ParseUint(value, 10, 64); err == nil {
-			query = query.Where("id = ? OR username LIKE ? OR display_name LIKE ? OR email LIKE ? OR department LIKE ?", employeeNo, like, like, like, like)
+			query = query.Where("id = ? OR username LIKE ? OR display_name LIKE ? OR email LIKE ? OR department LIKE ? OR title LIKE ?", employeeNo, like, like, like, like, like)
 		} else {
-			query = query.Where("username LIKE ? OR display_name LIKE ? OR email LIKE ? OR department LIKE ?", like, like, like, like)
+			query = query.Where("username LIKE ? OR display_name LIKE ? OR email LIKE ? OR department LIKE ? OR title LIKE ?", like, like, like, like, like)
 		}
 	}
 	var total int64
@@ -305,6 +305,10 @@ func (s *Service) CreateEmployee(input EmployeeInput) (*model.Employee, error) {
 	if err != nil {
 		return nil, err
 	}
+	position, err := s.resolvePosition(normalized.Role, department, normalized.PositionID)
+	if err != nil {
+		return nil, err
+	}
 	var count int64
 	if err := s.store.DB.Model(&model.Employee{}).Where("LOWER(username) = ?", strings.ToLower(normalized.Username)).Count(&count).Error; err != nil {
 		return nil, err
@@ -319,7 +323,7 @@ func (s *Service) CreateEmployee(input EmployeeInput) (*model.Employee, error) {
 	employee := model.Employee{
 		PublicID: publicID, LegacyEmployeeNo: publicID, Username: normalized.Username,
 		DisplayName: normalized.DisplayName, Email: normalized.Email, Phone: normalized.Phone,
-		Title: normalized.Title, EmploymentType: normalized.EmploymentType, HireDate: normalized.HireDate,
+		PositionID: position.ID, Title: position.Name, EmploymentType: normalized.EmploymentType, HireDate: normalized.HireDate,
 		ProbationEndDate: normalized.ProbationEndDate, WorkLocation: normalized.WorkLocation, Role: normalized.Role,
 		EmergencyContactName: normalized.EmergencyContactName, EmergencyContactPhone: normalized.EmergencyContactPhone,
 		EmergencyContactRelation: normalized.EmergencyContactRelation,
@@ -353,6 +357,8 @@ func (s *Service) UpdateEmployee(publicID string, input EmployeeInput) (*model.E
 	}
 	if employee.Username == "admin" {
 		input.Username = "admin"
+		input.DepartmentID = employee.DepartmentID
+		input.PositionID = model.PositionSystemAdminID
 	}
 	input.Role = employee.Role
 	input.Status = employee.Status
@@ -361,6 +367,10 @@ func (s *Service) UpdateEmployee(publicID string, input EmployeeInput) (*model.E
 		return nil, err
 	}
 	department, err := s.resolveDepartment(normalized.Role, normalized.DepartmentID)
+	if err != nil {
+		return nil, err
+	}
+	position, err := s.resolvePosition(normalized.Role, department, normalized.PositionID)
 	if err != nil {
 		return nil, err
 	}
@@ -384,11 +394,11 @@ func (s *Service) UpdateEmployee(publicID string, input EmployeeInput) (*model.E
 	if department != nil {
 		departmentID, departmentName = department.ID, department.Name
 	}
-	departmentChanged, titleChanged := employee.DepartmentID != departmentID, employee.Title != normalized.Title
+	departmentChanged, positionChanged := employee.DepartmentID != departmentID, employee.PositionID != position.ID
 	if err := s.store.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&employee).Updates(map[string]any{
 			"username": normalized.Username, "display_name": normalized.DisplayName, "email": normalized.Email, "phone": normalized.Phone,
-			"department_id": departmentID, "department": departmentName, "title": normalized.Title,
+			"department_id": departmentID, "department": departmentName, "position_id": position.ID, "title": position.Name,
 			"employment_type": normalized.EmploymentType, "hire_date": normalized.HireDate,
 			"probation_end_date": normalized.ProbationEndDate, "work_location": normalized.WorkLocation,
 			"emergency_contact_name": normalized.EmergencyContactName, "emergency_contact_phone": normalized.EmergencyContactPhone,
@@ -396,14 +406,14 @@ func (s *Service) UpdateEmployee(publicID string, input EmployeeInput) (*model.E
 		}).Error; err != nil {
 			return err
 		}
-		if !departmentChanged && !titleChanged {
+		if !departmentChanged && !positionChanged {
 			return nil
 		}
 		eventType := model.EmploymentEventPromotion
 		if departmentChanged {
 			eventType = model.EmploymentEventTransfer
 		}
-		return createEmploymentEvent(tx, employee, eventType, time.Now().UTC().Format("2006-01-02"), employee.DepartmentID, employee.Department, departmentID, departmentName, employee.Title, normalized.Title, "HR 直接调整员工任职信息", "")
+		return createEmploymentEvent(tx, employee, eventType, time.Now().UTC().Format("2006-01-02"), employee.DepartmentID, employee.Department, departmentID, departmentName, employee.Title, position.Name, "HR 直接调整员工任职信息", "")
 	}); err != nil {
 		return nil, err
 	}
@@ -538,7 +548,12 @@ func (s *Service) DeleteDepartment(id string) error {
 	if count > 0 {
 		return fmt.Errorf("%w: 部门仍有关联员工，不能删除", ErrConflict)
 	}
-	return s.store.DB.Delete(&department).Error
+	return s.store.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("department_id = ?", department.ID).Delete(&model.DepartmentPosition{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&department).Error
+	})
 }
 
 func (s *Service) validateDepartmentParent(departmentID, parentID string) error {
@@ -745,7 +760,7 @@ func normalizeEmployee(input EmployeeInput) (EmployeeInput, error) {
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	input.Phone = strings.TrimSpace(input.Phone)
 	input.DepartmentID = strings.TrimSpace(input.DepartmentID)
-	input.Title = strings.TrimSpace(input.Title)
+	input.PositionID = strings.TrimSpace(input.PositionID)
 	input.EmploymentType = strings.ToLower(strings.TrimSpace(input.EmploymentType))
 	input.HireDate = strings.TrimSpace(input.HireDate)
 	input.ProbationEndDate = strings.TrimSpace(input.ProbationEndDate)
@@ -788,7 +803,10 @@ func normalizeEmployee(input EmployeeInput) (EmployeeInput, error) {
 	if input.HireDate != "" && input.ProbationEndDate != "" && input.ProbationEndDate < input.HireDate {
 		return input, fmt.Errorf("%w: 试用期结束日期不能早于入职日期", ErrInvalid)
 	}
-	if len(input.Email) > 255 || len(input.Phone) > 32 || len(input.DepartmentID) > 40 || len(input.Title) > 100 || len(input.WorkLocation) > 100 || len([]rune(input.EmergencyContactName)) > 100 || len(input.EmergencyContactPhone) > 32 || len([]rune(input.EmergencyContactRelation)) > 50 {
+	if input.PositionID == "" {
+		return input, fmt.Errorf("%w: 必须选择岗位", ErrInvalid)
+	}
+	if len(input.Email) > 255 || len(input.Phone) > 32 || len(input.DepartmentID) > 40 || len(input.PositionID) > 40 || len(input.WorkLocation) > 100 || len([]rune(input.EmergencyContactName)) > 100 || len(input.EmergencyContactPhone) > 32 || len([]rune(input.EmergencyContactRelation)) > 50 {
 		return input, fmt.Errorf("%w: 员工资料过长", ErrInvalid)
 	}
 	return input, nil

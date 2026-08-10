@@ -23,6 +23,7 @@ const router = createRouter({
         { path: 'dashboard', name: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '人事概览', permission: 'people.dashboard:view' } },
         { path: 'employees', name: 'employees', component: () => import('@/views/EmployeesView.vue'), meta: { title: '员工管理', permission: 'people.employee:view' } },
         { path: 'departments', name: 'departments', component: () => import('@/views/DepartmentsView.vue'), meta: { title: '部门管理', permission: 'people.department:manage' } },
+        { path: 'positions', name: 'positions', component: () => import('@/views/PositionsView.vue'), meta: { title: '岗位管理', permission: 'people.department:manage' } },
         { path: 'approvals', name: 'approvals', component: () => import('@/views/ApprovalsView.vue'), meta: { title: '审批中心' } },
         { path: 'operations', name: 'operations', component: () => import('@/views/PeopleOperationsView.vue'), meta: { title: '人事运营' } },
         { path: 'profile', name: 'profile', component: () => import('@/views/ProfileView.vue'), meta: { title: '个人资料' } },

@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { ApprovalRequest, ApprovalType, ApprovalTypeDefinition, ContractInput, Department, DepartmentInput, DepartureRequest, Employee, EmployeeContract, EmployeeInput, EmploymentEvent, GoalInput, HRDashboard, LeaveBalance, LeaveRecord, NotificationItem, NotificationSummary, Page, PerformanceGoal } from '@/types'
+import type { ApprovalRequest, ApprovalType, ApprovalTypeDefinition, ContractInput, Department, DepartmentInput, DepartureRequest, Employee, EmployeeContract, EmployeeInput, EmploymentEvent, GoalInput, HRDashboard, LeaveBalance, LeaveRecord, NotificationItem, NotificationSummary, Page, PerformanceGoal, Position, PositionInput } from '@/types'
 
 interface Envelope<T> {
   code: string
@@ -61,6 +61,10 @@ export const peopleApi = {
   createDepartment: (input: DepartmentInput) => mutation<Department>(() => client.post('/departments', input)),
   updateDepartment: (id: string, input: DepartmentInput) => mutation<Department>(() => client.put(`/departments/${id}`, input)),
   deleteDepartment: (id: string) => mutation<{ deleted: boolean }>(() => client.delete(`/departments/${id}`)),
+  positions: (params?: { q?: string; departmentId?: string }) => unwrap<Position[]>(client.get('/positions', { params })),
+  createPosition: (input: PositionInput) => mutation<Position>(() => client.post('/positions', input)),
+  updatePosition: (id: string, input: PositionInput) => mutation<Position>(() => client.put(`/positions/${id}`, input)),
+  deletePosition: (id: string) => mutation<{ deleted: boolean }>(() => client.delete(`/positions/${id}`)),
   dashboard: () => unwrap<HRDashboard>(client.get('/hr/dashboard')),
   approvalTypes: () => unwrap<ApprovalTypeDefinition[]>(client.get('/approval-types')),
   approvals: (params?: { scope?: 'mine' | 'pending' | 'all'; type?: ApprovalType | ''; status?: string }) => unwrap<ApprovalRequest[]>(client.get('/approvals', { params })),

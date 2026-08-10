@@ -99,6 +99,10 @@ func NewServer(address string, verifier, innerVerifier *security.GatewayVerifier
 	api.POST("/departments", a.requireCSRF(), a.createDepartment)
 	api.PUT("/departments/:id", a.requireCSRF(), a.updateDepartment)
 	api.DELETE("/departments/:id", a.requireCSRF(), a.deleteDepartment)
+	api.GET("/positions", a.listPositions)
+	api.POST("/positions", a.requireCSRF(), a.createPosition)
+	api.PUT("/positions/:id", a.requireCSRF(), a.updatePosition)
+	api.DELETE("/positions/:id", a.requireCSRF(), a.deletePosition)
 	api.GET("/hr/dashboard", a.hrDashboard)
 	api.GET("/approval-types", a.listApprovalTypes)
 	api.GET("/approvals", a.listApprovals)
@@ -133,6 +137,7 @@ func NewServer(address string, verifier, innerVerifier *security.GatewayVerifier
 	inner.GET("/directory/employees", a.listDirectoryEmployees)
 	inner.GET("/directory/employees/:id", a.getDirectoryEmployee)
 	inner.GET("/directory/departments", a.listDirectoryDepartments)
+	inner.GET("/directory/positions", a.listDirectoryPositions)
 	return h
 }
 
@@ -297,6 +302,53 @@ func (a *API) deleteDepartment(_ context.Context, c *app.RequestContext) {
 		return
 	}
 	if err := a.service.DeleteDepartment(c.Param("id")); err != nil {
+		handleError(c, err)
+		return
+	}
+	ok(c, utils.H{"deleted": true})
+}
+
+func (a *API) listPositions(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.session(c, false); !valid {
+		return
+	}
+	result, err := a.service.ListPositions(string(c.Query("q")), string(c.Query("departmentId")))
+	respond(c, result, err)
+}
+
+func (a *API) createPosition(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.permissionSession(c, service.PermissionDepartmentManage); !valid {
+		return
+	}
+	var request service.PositionInput
+	if !bind(c, &request) {
+		return
+	}
+	result, err := a.service.CreatePosition(request)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	created(c, result)
+}
+
+func (a *API) updatePosition(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.permissionSession(c, service.PermissionDepartmentManage); !valid {
+		return
+	}
+	var request service.PositionInput
+	if !bind(c, &request) {
+		return
+	}
+	result, err := a.service.UpdatePosition(c.Param("id"), request)
+	respond(c, result, err)
+}
+
+func (a *API) deletePosition(_ context.Context, c *app.RequestContext) {
+	if _, _, valid := a.permissionSession(c, service.PermissionDepartmentManage); !valid {
+		return
+	}
+	if err := a.service.DeletePosition(c.Param("id")); err != nil {
 		handleError(c, err)
 		return
 	}
@@ -648,6 +700,11 @@ func (a *API) getDirectoryEmployee(_ context.Context, c *app.RequestContext) {
 
 func (a *API) listDirectoryDepartments(_ context.Context, c *app.RequestContext) {
 	result, err := a.service.ListDepartments(string(c.Query("q")))
+	respond(c, result, err)
+}
+
+func (a *API) listDirectoryPositions(_ context.Context, c *app.RequestContext) {
+	result, err := a.service.ListPositions(string(c.Query("q")), string(c.Query("departmentId")))
 	respond(c, result, err)
 }
 

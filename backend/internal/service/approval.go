@@ -33,7 +33,7 @@ type ApprovalTypeDefinition struct {
 
 var approvalTypes = []ApprovalTypeDefinition{
 	{Code: model.ApprovalTypeLeave, Name: "请假", Description: "年假、病假、事假等休假申请", Steps: []string{"部门负责人审批"}},
-	{Code: model.ApprovalTypeTransfer, Name: "岗位异动", Description: "部门或职务调整申请", Steps: []string{"部门负责人审批", "HR 审批"}},
+	{Code: model.ApprovalTypeTransfer, Name: "岗位异动", Description: "部门或岗位调整申请", Steps: []string{"部门负责人审批", "HR 审批"}},
 	{Code: model.ApprovalTypeDeparture, Name: "离职", Description: "员工离职与账号停用流程", Steps: []string{"部门负责人审批", "HR 审批"}},
 }
 
@@ -156,7 +156,7 @@ func (s *Service) prepareApproval(actor *model.Employee, department model.Depart
 		return "请假申请", fmt.Sprintf("%s 申请 %s 至 %s 请假 %.0f 天", actor.DisplayName, startDate, endDate, days), data, []model.ApprovalStep{managerStep}, leave, nil
 	case model.ApprovalTypeTransfer:
 		targetDepartmentID := dataString(input.Data, "targetDepartmentId")
-		targetTitle := dataString(input.Data, "targetTitle")
+		targetPositionID := dataString(input.Data, "targetPositionId")
 		effectiveDate := dataString(input.Data, "effectiveDate")
 		reason := dataString(input.Data, "reason")
 		if len([]rune(reason)) > 1000 {
@@ -164,14 +164,18 @@ func (s *Service) prepareApproval(actor *model.Employee, department model.Depart
 		}
 		date, dateErr := parseDate(effectiveDate)
 		var target model.Department
-		if targetDepartmentID == "" || targetTitle == "" || len([]rune(targetTitle)) > 100 || dateErr != nil || date.Before(todayUTC()) || s.store.DB.Where("id = ? AND status = ?", targetDepartmentID, model.StatusEnabled).First(&target).Error != nil {
-			return "", "", nil, nil, nil, fmt.Errorf("%w: 目标部门、职务或生效日期无效", ErrInvalid)
+		if targetDepartmentID == "" || targetPositionID == "" || dateErr != nil || date.Before(todayUTC()) || s.store.DB.Where("id = ? AND status = ?", targetDepartmentID, model.StatusEnabled).First(&target).Error != nil {
+			return "", "", nil, nil, nil, fmt.Errorf("%w: 目标部门、岗位或生效日期无效", ErrInvalid)
 		}
-		if target.ID == actor.DepartmentID && targetTitle == actor.Title {
-			return "", "", nil, nil, nil, fmt.Errorf("%w: 部门和职务均未发生变化", ErrInvalid)
+		position, err := s.resolvePosition(model.RoleEmployee, &target, targetPositionID)
+		if err != nil {
+			return "", "", nil, nil, nil, err
 		}
-		data := map[string]any{"targetDepartmentId": target.ID, "targetDepartmentName": target.Name, "targetTitle": targetTitle, "effectiveDate": effectiveDate, "reason": reason}
-		return "岗位异动申请", fmt.Sprintf("%s 申请调整至 %s / %s", actor.DisplayName, target.Name, targetTitle), data, []model.ApprovalStep{managerStep, hrStep}, nil, nil
+		if target.ID == actor.DepartmentID && position.ID == actor.PositionID {
+			return "", "", nil, nil, nil, fmt.Errorf("%w: 部门和岗位均未发生变化", ErrInvalid)
+		}
+		data := map[string]any{"targetDepartmentId": target.ID, "targetDepartmentName": target.Name, "targetPositionId": position.ID, "targetPositionName": position.Name, "targetTitle": position.Name, "effectiveDate": effectiveDate, "reason": reason}
+		return "岗位异动申请", fmt.Sprintf("%s 申请调整至 %s / %s", actor.DisplayName, target.Name, position.Name), data, []model.ApprovalStep{managerStep, hrStep}, nil, nil
 	default:
 		return "", "", nil, nil, nil, fmt.Errorf("%w: 不支持的审批类型", ErrInvalid)
 	}
@@ -304,10 +308,27 @@ func (s *Service) completeApproval(tx *gorm.DB, request *model.ApprovalRequest, 
 		}
 		return tx.Model(&balance).UpdateColumn(column, gorm.Expr(column+" + ?", leave.Days)).Error
 	case model.ApprovalTypeTransfer:
-		targetID, targetTitle := dataString(data, "targetDepartmentId"), dataString(data, "targetTitle")
+		targetID, targetPositionID := dataString(data, "targetDepartmentId"), dataString(data, "targetPositionId")
 		var target model.Department
 		if err := tx.Where("id = ? AND status = ?", targetID, model.StatusEnabled).First(&target).Error; err != nil {
 			return fmt.Errorf("%w: 目标部门已不可用", ErrConflict)
+		}
+		var position model.Position
+		positionQuery := tx.Where("status = ?", model.StatusEnabled)
+		if targetPositionID != "" {
+			positionQuery = positionQuery.Where("id = ?", targetPositionID)
+		} else {
+			positionQuery = positionQuery.Where("name = ?", dataString(data, "targetTitle"))
+		}
+		if err := positionQuery.First(&position).Error; err != nil {
+			return fmt.Errorf("%w: 目标岗位已不可用", ErrConflict)
+		}
+		var relationCount int64
+		if err := tx.Model(&model.DepartmentPosition{}).Where("department_id = ? AND position_id = ?", target.ID, position.ID).Count(&relationCount).Error; err != nil {
+			return err
+		}
+		if relationCount == 0 {
+			return fmt.Errorf("%w: 目标岗位已不属于目标部门", ErrConflict)
 		}
 		if employee.DepartmentID != target.ID {
 			var leaderCount int64
@@ -322,10 +343,10 @@ func (s *Service) completeApproval(tx *gorm.DB, request *model.ApprovalRequest, 
 		if employee.DepartmentID == target.ID {
 			eventType = model.EmploymentEventPromotion
 		}
-		if err := createEmploymentEvent(tx, employee, eventType, dataString(data, "effectiveDate"), employee.DepartmentID, employee.Department, target.ID, target.Name, employee.Title, targetTitle, dataString(data, "reason"), request.ID); err != nil {
+		if err := createEmploymentEvent(tx, employee, eventType, dataString(data, "effectiveDate"), employee.DepartmentID, employee.Department, target.ID, target.Name, employee.Title, position.Name, dataString(data, "reason"), request.ID); err != nil {
 			return err
 		}
-		return tx.Model(&employee).Updates(map[string]any{"department_id": target.ID, "department": target.Name, "title": targetTitle}).Error
+		return tx.Model(&employee).Updates(map[string]any{"department_id": target.ID, "department": target.Name, "position_id": position.ID, "title": position.Name}).Error
 	default:
 		return fmt.Errorf("%w: 不支持的审批类型", ErrInvalid)
 	}

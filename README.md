@@ -25,6 +25,12 @@ People 是企业内部员工信息系统，账号体系与 Sign-in 完全隔离�
 
 管理员可在管理前端维护多级部门树，包括上级部门、编码、名称、描述和启停状态。新增或修改普通员工时必须选择一个已启用部门，管理员账号可以不属于部门。部门名称修改后会同步到员工资料；仍有关联员工或下级部门的部门不能删除，修改上级部门时会拒绝自引用和循环层级。旧数据库中的部门文本会在首次升级启动时自动转换为受管理部门。
 
+## 岗位管理
+
+岗位与部门为多对多关系，同一岗位可用于多个部门，一个部门也可配置多个岗位。每名员工必须选择一个已启用且属于其部门的岗位；内置 `admin` 固定使用“系统管理员”岗位。岗位改名会同步员工资料中的岗位名称快照，仍有关联员工的岗位不能停用、删除或移除员工所在部门。
+
+首次启动会幂等预置系统管理员、通用员工及常见 IT 公司岗位，包括管理、研发、架构、前后端、移动端、测试、DevOps、SRE、安全、数据、AI、产品、项目、设计、IT 支持、网络、人力、财务、销售、客户成功和运营等类别。升级旧数据库时，已有自由文本职务会自动映射或迁移为受管理岗位，空职务使用“通用员工”。
+
 ## Inner 员工目录
 
 Permission 不读取 People 数据库，而是通过 Gateway Inner 使用独立 AK/SK 实时获取员工和部门目录：
@@ -32,8 +38,9 @@ Permission 不读取 People 数据库，而是通过 Gateway Inner 使用独立 
 - `GET /api/inner/people/directory/employees`
 - `GET /api/inner/people/directory/employees/:id`
 - `GET /api/inner/people/directory/departments`
+- `GET /api/inner/people/directory/positions`
 
-People 后端对应的上游路径为 `/api/v1/inner/directory/**`，只接受 `PEOPLE_INNER_ACCESS_KEY`、`PEOPLE_INNER_SECRET_KEY` 对应的 Gateway 系统签名。部门响应中的 `parentId` 表示父部门，空值表示顶级部门。
+People 后端对应的上游路径为 `/api/v1/inner/directory/**`，只接受 `PEOPLE_INNER_ACCESS_KEY`、`PEOPLE_INNER_SECRET_KEY` 对应的 Gateway 系统签名。部门响应中的 `parentId` 表示父部门，空值表示顶级部门；岗位响应通过 `departmentIds` 表示可使用该岗位的部门。
 
 ## OAuth
 

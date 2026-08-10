@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Close, Plus, RefreshLeft, View } from '@element-plus/icons-vue'
 import { apiMessage, peopleApi } from '@/api'
 import { auth } from '@/auth'
-import type { ApprovalRequest, ApprovalStatus, ApprovalType, ApprovalTypeDefinition, Department } from '@/types'
+import type { ApprovalRequest, ApprovalStatus, ApprovalType, ApprovalTypeDefinition, Department, Position } from '@/types'
 
 const items = ref<ApprovalRequest[]>([])
 const types = ref<ApprovalTypeDefinition[]>([])
 const departments = ref<Department[]>([])
+const positions = ref<Position[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const applicationOpen = ref(false)
@@ -19,8 +20,9 @@ const scope = ref<'mine' | 'pending' | 'all'>('mine')
 const typeFilter = ref<ApprovalType | ''>('')
 const statusFilter = ref<ApprovalStatus | ''>('')
 const canViewAll = computed(() => auth.can('people.approval:view'))
-const form = reactive({ type: 'leave' as ApprovalType, leaveType: 'annual', startDate: '', endDate: '', reason: '', lastWorkingDate: '', targetDepartmentId: '', targetTitle: '', effectiveDate: '' })
+const form = reactive({ type: 'leave' as ApprovalType, leaveType: 'annual', startDate: '', endDate: '', reason: '', lastWorkingDate: '', targetDepartmentId: '', targetPositionId: '', effectiveDate: '' })
 const review = reactive({ id: '', approved: true, comment: '', title: '' })
+const availablePositions = computed(() => positions.value.filter((position) => position.status === 'enabled' && position.departmentIds.includes(form.targetDepartmentId)))
 
 const typeMeta: Record<ApprovalType, { label: string; tone: 'success' | 'warning' | 'primary' }> = {
   leave: { label: '请假', tone: 'success' },
@@ -36,6 +38,10 @@ const leaveLabels: Record<string, string> = { annual: '年假', sick: '病假', 
 function employeeNo(value: number) { return String(value).padStart(6, '0') }
 function disablePast(date: Date) { return date.getTime() < new Date().setHours(0, 0, 0, 0) }
 
+watch(() => form.targetDepartmentId, () => {
+  if (form.targetPositionId && !availablePositions.value.some((position) => position.id === form.targetPositionId)) form.targetPositionId = ''
+})
+
 async function load() {
   loading.value = true
   try {
@@ -48,7 +54,7 @@ async function load() {
 }
 
 function openApplication() {
-  Object.assign(form, { type: 'leave', leaveType: 'annual', startDate: '', endDate: '', reason: '', lastWorkingDate: '', targetDepartmentId: '', targetTitle: '', effectiveDate: '' })
+  Object.assign(form, { type: 'leave', leaveType: 'annual', startDate: '', endDate: '', reason: '', lastWorkingDate: '', targetDepartmentId: '', targetPositionId: '', effectiveDate: '' })
   applicationOpen.value = true
 }
 
@@ -56,8 +62,8 @@ async function submitApplication() {
   const data: Record<string, string> = { reason: form.reason }
   if (form.type === 'leave') Object.assign(data, { leaveType: form.leaveType, startDate: form.startDate, endDate: form.endDate })
   if (form.type === 'departure') data.lastWorkingDate = form.lastWorkingDate
-  if (form.type === 'transfer') Object.assign(data, { targetDepartmentId: form.targetDepartmentId, targetTitle: form.targetTitle, effectiveDate: form.effectiveDate })
-  if ((form.type === 'leave' && (!form.startDate || !form.endDate)) || (form.type === 'departure' && (!form.lastWorkingDate || !form.reason)) || (form.type === 'transfer' && (!form.targetDepartmentId || !form.targetTitle || !form.effectiveDate))) {
+  if (form.type === 'transfer') Object.assign(data, { targetDepartmentId: form.targetDepartmentId, targetPositionId: form.targetPositionId, effectiveDate: form.effectiveDate })
+  if ((form.type === 'leave' && (!form.startDate || !form.endDate)) || (form.type === 'departure' && (!form.lastWorkingDate || !form.reason)) || (form.type === 'transfer' && (!form.targetDepartmentId || !form.targetPositionId || !form.effectiveDate))) {
     ElMessage.warning('请完整填写申请信息')
     return
   }
@@ -115,14 +121,14 @@ function detailRows(item: ApprovalRequest) {
     ['请假类型', leaveLabels[String(item.data.leaveType)] || item.data.leaveType], ['开始日期', item.data.startDate], ['结束日期', item.data.endDate], ['工作日', `${item.data.days} 天`], ['事由', item.data.reason || '-'],
   ]
   if (item.type === 'transfer') return [
-    ['目标部门', item.data.targetDepartmentName], ['目标职务', item.data.targetTitle], ['生效日期', item.data.effectiveDate], ['异动原因', item.data.reason || '-'],
+    ['目标部门', item.data.targetDepartmentName], ['目标岗位', item.data.targetPositionName || item.data.targetTitle], ['生效日期', item.data.effectiveDate], ['异动原因', item.data.reason || '-'],
   ]
   return [['最后工作日', item.data.lastWorkingDate], ['离职原因', item.data.reason]]
 }
 
 onMounted(async () => {
   try {
-    [types.value, departments.value] = await Promise.all([peopleApi.approvalTypes(), peopleApi.departments()])
+    [types.value, departments.value, positions.value] = await Promise.all([peopleApi.approvalTypes(), peopleApi.departments(), peopleApi.positions()])
   } catch (error) {
     ElMessage.error(apiMessage(error, '审批基础数据加载失败'))
   }
@@ -167,7 +173,7 @@ onMounted(async () => {
         </template>
         <template v-else-if="form.type === 'transfer'">
           <el-form-item label="目标部门"><el-select v-model="form.targetDepartmentId" filterable class="full-width"><el-option v-for="department in departments.filter((item) => item.status === 'enabled')" :key="department.id" :label="department.name" :value="department.id" /></el-select></el-form-item>
-          <el-form-item label="目标职务"><el-input v-model="form.targetTitle" maxlength="100" /></el-form-item>
+          <el-form-item label="目标岗位"><el-select v-model="form.targetPositionId" filterable class="full-width" :disabled="!form.targetDepartmentId" placeholder="选择岗位"><el-option v-for="position in availablePositions" :key="position.id" :label="position.name" :value="position.id" /></el-select></el-form-item>
           <el-form-item label="生效日期"><el-date-picker v-model="form.effectiveDate" type="date" value-format="YYYY-MM-DD" :disabled-date="disablePast" class="full-width" /></el-form-item>
         </template>
         <el-form-item v-else label="最后工作日"><el-date-picker v-model="form.lastWorkingDate" type="date" value-format="YYYY-MM-DD" :disabled-date="disablePast" class="full-width" /></el-form-item>

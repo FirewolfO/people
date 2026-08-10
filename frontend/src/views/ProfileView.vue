@@ -12,7 +12,7 @@ const editing = ref(false)
 const saving = ref(false)
 const events = ref<EmploymentEvent[]>([])
 const form = reactive({ email: '', phone: '', emergencyContactName: '', emergencyContactPhone: '', emergencyContactRelation: '' })
-const eventLabels: Record<string, string> = { hire: '入职', transfer: '部门异动', promotion: '职务调整', departure: '离职', enable: '账号启用', disable: '账号停用' }
+const eventLabels: Record<string, string> = { hire: '入职', transfer: '部门异动', promotion: '岗位调整', departure: '离职', enable: '账号启用', disable: '账号停用' }
 
 function openEdit() {
   const user = auth.state.user
@@ -42,7 +42,7 @@ onMounted(async () => {
       <div><dt>姓名</dt><dd>{{ auth.state.user?.displayName || '-' }}</dd></div>
       <div><dt>工号</dt><dd>{{ auth.state.user?.employeeNo ? String(auth.state.user.employeeNo).padStart(6, '0') : '-' }}</dd></div>
       <div><dt>部门</dt><dd>{{ auth.state.user?.department || '-' }}</dd></div>
-      <div><dt>职务</dt><dd>{{ auth.state.user?.title || '-' }}</dd></div>
+      <div><dt>岗位</dt><dd>{{ auth.state.user?.title || '-' }}</dd></div>
       <div><dt>邮箱</dt><dd>{{ auth.state.user?.email || '-' }}</dd></div>
       <div><dt>手机号</dt><dd>{{ auth.state.user?.phone || '-' }}</dd></div>
       <div><dt>紧急联系人</dt><dd>{{ auth.state.user?.emergencyContactName || '-' }}<small v-if="auth.state.user?.emergencyContactRelation"> · {{ auth.state.user.emergencyContactRelation }}</small></dd></div>

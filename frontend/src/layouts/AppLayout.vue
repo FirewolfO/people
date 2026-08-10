@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElNotification } from 'element-plus'
-import { Bell, Briefcase, DataAnalysis, DocumentChecked, OfficeBuilding, User, UserFilled, SwitchButton } from '@element-plus/icons-vue'
+import { Bell, Briefcase, DataAnalysis, DocumentChecked, OfficeBuilding, Postcard, User, UserFilled, SwitchButton } from '@element-plus/icons-vue'
 import { auth } from '@/auth'
 import { apiMessage } from '@/api'
 import { peopleApi } from '@/api'
@@ -76,6 +76,9 @@ async function logout() {
         </RouterLink>
         <RouterLink v-if="auth.can('people.department:manage')" to="/departments" :class="{ active: route.path === '/departments' }">
           <el-icon><OfficeBuilding /></el-icon><span>部门管理</span>
+        </RouterLink>
+        <RouterLink v-if="auth.can('people.department:manage')" to="/positions" :class="{ active: route.path === '/positions' }">
+          <el-icon><Postcard /></el-icon><span>岗位管理</span>
         </RouterLink>
         <RouterLink to="/approvals" :class="{ active: route.path === '/approvals' }">
           <el-icon><DocumentChecked /></el-icon><span>审批中心</span>

@@ -15,15 +15,16 @@ func approvalFixture(t *testing.T) (*Service, *model.Department, *model.Employee
 	if err != nil {
 		t.Fatal(err)
 	}
-	leader, err := svc.CreateEmployee(EmployeeInput{Username: "deliverylead", DisplayName: "交付负责人", DepartmentID: department.ID})
+	positionID := bindTestPosition(t, svc, department.ID, "pos_backend_engineer")
+	leader, err := svc.CreateEmployee(EmployeeInput{Username: "deliverylead", DisplayName: "交付负责人", DepartmentID: department.ID, PositionID: positionID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker, err := svc.CreateEmployee(EmployeeInput{Username: "deliveryuser", DisplayName: "交付员工", DepartmentID: department.ID, HireDate: "2025-01-02", Title: "工程师"})
+	worker, err := svc.CreateEmployee(EmployeeInput{Username: "deliveryuser", DisplayName: "交付员工", DepartmentID: department.ID, PositionID: positionID, HireDate: "2025-01-02"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hr, err := svc.CreateEmployee(EmployeeInput{Username: "hrpartner", DisplayName: "HRBP", DepartmentID: department.ID})
+	hr, err := svc.CreateEmployee(EmployeeInput{Username: "hrpartner", DisplayName: "HRBP", DepartmentID: department.ID, PositionID: positionID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,8 +107,9 @@ func TestTransferApprovalUpdatesMasterDataAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	targetPositionID := bindTestPosition(t, svc, target.ID, "pos_software_architect")
 	request, err := svc.CreateApproval(worker, ApprovalInput{Type: model.ApprovalTypeTransfer, Data: map[string]any{
-		"targetDepartmentId": target.ID, "targetTitle": "高级工程师", "effectiveDate": time.Now().UTC().AddDate(0, 0, 7).Format("2006-01-02"), "reason": "内部发展",
+		"targetDepartmentId": target.ID, "targetPositionId": targetPositionID, "effectiveDate": time.Now().UTC().AddDate(0, 0, 7).Format("2006-01-02"), "reason": "内部发展",
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +121,7 @@ func TestTransferApprovalUpdatesMasterDataAndHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	updated, err := svc.GetEmployee(worker.PublicID)
-	if err != nil || updated.DepartmentID != target.ID || updated.Title != "高级工程师" {
+	if err != nil || updated.DepartmentID != target.ID || updated.PositionID != targetPositionID || updated.Title != "软件架构师" {
 		t.Fatalf("employee after transfer = %#v, %v", updated, err)
 	}
 	if updated.PublicID != worker.PublicID || updated.EmployeeNo != worker.EmployeeNo {

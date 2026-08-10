@@ -28,6 +28,34 @@ func newTestService(t *testing.T) *Service {
 	return New(database, time.Hour)
 }
 
+func bindTestPosition(t *testing.T, svc *Service, departmentID, positionID string) string {
+	t.Helper()
+	positions, err := svc.ListPositions("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, position := range positions {
+		if position.ID != positionID {
+			continue
+		}
+		for _, current := range position.DepartmentIDs {
+			if current == departmentID {
+				return position.ID
+			}
+		}
+		position.DepartmentIDs = append(position.DepartmentIDs, departmentID)
+		if _, err := svc.UpdatePosition(position.ID, PositionInput{
+			Code: position.Code, Name: position.Name, Description: position.Description,
+			DepartmentIDs: position.DepartmentIDs, Status: position.Status,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return position.ID
+	}
+	t.Fatalf("test position %q not found", positionID)
+	return ""
+}
+
 func queryValue(t *testing.T, rawURL, key string) string {
 	t.Helper()
 	parsed, err := url.Parse(rawURL)
@@ -48,7 +76,8 @@ func TestNewEmployeeMustSetPasswordBeforeOAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	created, err := svc.CreateEmployee(EmployeeInput{
-		Username: "alice", DisplayName: "Alice", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled,
+		Username: "alice", DisplayName: "Alice", DepartmentID: department.ID,
+		PositionID: bindTestPosition(t, svc, department.ID, model.PositionGeneralID), Role: model.RoleEmployee, Status: model.StatusEnabled,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +131,7 @@ func TestEmployeeRequiresManagedDepartment(t *testing.T) {
 		t.Fatal(err)
 	}
 	input.DepartmentID = department.ID
+	input.PositionID = bindTestPosition(t, svc, department.ID, model.PositionGeneralID)
 	created, err := svc.CreateEmployee(input)
 	if err != nil {
 		t.Fatal(err)
@@ -141,13 +171,90 @@ func TestEmployeeRoleCannotBeElevatedThroughEmployeeInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	created, err := svc.CreateEmployee(EmployeeInput{
-		Username: "operator", DisplayName: "Operator", DepartmentID: department.ID, Role: model.RoleAdmin, Status: model.StatusDisabled,
+		Username: "operator", DisplayName: "Operator", DepartmentID: department.ID,
+		PositionID: bindTestPosition(t, svc, department.ID, model.PositionGeneralID), Role: model.RoleAdmin, Status: model.StatusDisabled,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created.Role != model.RoleEmployee || created.Status != model.StatusEnabled {
 		t.Fatalf("created employee privilege = %#v", created)
+	}
+}
+
+func TestPositionManyToManyAndEmployeeAssignment(t *testing.T) {
+	svc := newTestService(t)
+	engineering, err := svc.CreateDepartment(DepartmentInput{Code: "engineering", Name: "研发部", Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform, err := svc.CreateDepartment(DepartmentInput{Code: "platform", Name: "平台部", Status: model.StatusEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	position, err := svc.CreatePosition(PositionInput{
+		Code: "api_engineer", Name: "API 工程师", Description: "负责 API 研发",
+		DepartmentIDs: []string{engineering.ID, platform.ID}, Status: model.StatusEnabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(position.DepartmentIDs) != 2 {
+		t.Fatalf("position departments = %#v", position.DepartmentIDs)
+	}
+	filtered, err := svc.ListPositions("API", platform.ID)
+	if err != nil || len(filtered) != 1 || filtered[0].ID != position.ID {
+		t.Fatalf("filtered positions = %#v, %v", filtered, err)
+	}
+	employee, err := svc.CreateEmployee(EmployeeInput{
+		Username: "apiuser", DisplayName: "API User", DepartmentID: engineering.ID, PositionID: position.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if employee.PositionID != position.ID || employee.Title != position.Name {
+		t.Fatalf("employee position = %#v", employee)
+	}
+	if _, err := svc.CreateEmployee(EmployeeInput{
+		Username: "invalidposition", DisplayName: "Invalid", DepartmentID: engineering.ID, PositionID: "pos_frontend_engineer",
+	}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unrelated position error = %v, want invalid", err)
+	}
+	if _, err := svc.UpdatePosition(position.ID, PositionInput{
+		Code: position.Code, Name: position.Name, Description: position.Description,
+		DepartmentIDs: []string{platform.ID}, Status: model.StatusEnabled,
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("remove used department error = %v, want conflict", err)
+	}
+	updated, err := svc.UpdatePosition(position.ID, PositionInput{
+		Code: position.Code, Name: "接口工程师", Description: position.Description,
+		DepartmentIDs: position.DepartmentIDs, Status: model.StatusEnabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	employee, err = svc.GetEmployee(employee.PublicID)
+	if err != nil || employee.Title != updated.Name {
+		t.Fatalf("renamed employee position = %#v, %v", employee, err)
+	}
+	if _, err := svc.UpdatePosition(position.ID, PositionInput{
+		Code: position.Code, Name: updated.Name, Description: position.Description,
+		DepartmentIDs: position.DepartmentIDs, Status: model.StatusDisabled,
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("disable used position error = %v, want conflict", err)
+	}
+	if err := svc.DeletePosition(position.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("delete used position error = %v, want conflict", err)
+	}
+	administrator, err := svc.GetEmployee("people-admin")
+	if err != nil || administrator.PositionID != model.PositionSystemAdminID || administrator.Title != "系统管理员" {
+		t.Fatalf("administrator position = %#v, %v", administrator, err)
+	}
+	administrator, err = svc.UpdateEmployee(administrator.PublicID, EmployeeInput{
+		Username: "changed-admin", DisplayName: administrator.DisplayName, DepartmentID: platform.ID, PositionID: position.ID,
+	})
+	if err != nil || administrator.Username != "admin" || administrator.DepartmentID != "" || administrator.PositionID != model.PositionSystemAdminID {
+		t.Fatalf("immutable administrator assignment = %#v, %v", administrator, err)
 	}
 }
 
@@ -188,7 +295,8 @@ func TestOAuthAccountSwitchDoesNotReplacePeopleSession(t *testing.T) {
 	}
 	alice, err := svc.CreateEmployee(EmployeeInput{
 		Username: "alice", DisplayName: "Alice", DepartmentID: department.ID,
-		Role: model.RoleEmployee, Status: model.StatusEnabled,
+		PositionID: bindTestPosition(t, svc, department.ID, model.PositionGeneralID),
+		Role:       model.RoleEmployee, Status: model.StatusEnabled,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -250,18 +358,19 @@ func TestEmployeeNumberIsDatabaseGeneratedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := svc.CreateEmployee(EmployeeInput{Username: "first", DisplayName: "First", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled})
+	positionID := bindTestPosition(t, svc, department.ID, model.PositionGeneralID)
+	first, err := svc.CreateEmployee(EmployeeInput{Username: "first", DisplayName: "First", DepartmentID: department.ID, PositionID: positionID, Role: model.RoleEmployee, Status: model.StatusEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := svc.CreateEmployee(EmployeeInput{Username: "second", DisplayName: "Second", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled})
+	second, err := svc.CreateEmployee(EmployeeInput{Username: "second", DisplayName: "Second", DepartmentID: department.ID, PositionID: positionID, Role: model.RoleEmployee, Status: model.StatusEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.EmployeeNo == 0 || second.EmployeeNo != first.EmployeeNo+1 {
 		t.Fatalf("employee numbers = %d, %d, want consecutive generated values", first.EmployeeNo, second.EmployeeNo)
 	}
-	updated, err := svc.UpdateEmployee(first.PublicID, EmployeeInput{Username: "first", DisplayName: "First Updated", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled})
+	updated, err := svc.UpdateEmployee(first.PublicID, EmployeeInput{Username: "first", DisplayName: "First Updated", DepartmentID: department.ID, PositionID: positionID, Role: model.RoleEmployee, Status: model.StatusEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,11 +389,12 @@ func TestDepartureRequiresLeaderThenHRAndDisablesEmployee(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leader, err := svc.CreateEmployee(EmployeeInput{Username: "leader", DisplayName: "Leader", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled})
+	positionID := bindTestPosition(t, svc, department.ID, model.PositionGeneralID)
+	leader, err := svc.CreateEmployee(EmployeeInput{Username: "leader", DisplayName: "Leader", DepartmentID: department.ID, PositionID: positionID, Role: model.RoleEmployee, Status: model.StatusEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker, err := svc.CreateEmployee(EmployeeInput{Username: "worker", DisplayName: "Worker", DepartmentID: department.ID, Role: model.RoleEmployee, Status: model.StatusEnabled})
+	worker, err := svc.CreateEmployee(EmployeeInput{Username: "worker", DisplayName: "Worker", DepartmentID: department.ID, PositionID: positionID, Role: model.RoleEmployee, Status: model.StatusEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +438,7 @@ func TestDepartmentLeaderDepartureFallsBackToAdministrator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leader, err := svc.CreateEmployee(EmployeeInput{Username: "director", DisplayName: "Director", DepartmentID: department.ID})
+	leader, err := svc.CreateEmployee(EmployeeInput{Username: "director", DisplayName: "Director", DepartmentID: department.ID, PositionID: bindTestPosition(t, svc, department.ID, model.PositionGeneralID)})
 	if err != nil {
 		t.Fatal(err)
 	}

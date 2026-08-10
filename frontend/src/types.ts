@@ -10,6 +10,7 @@ export interface Employee {
   phone: string
   departmentId: string
   department: string
+  positionId: string
   title: string
   employmentType: EmploymentType
   hireDate: string
@@ -34,7 +35,7 @@ export interface EmployeeInput {
   email: string
   phone: string
   departmentId: string
-  title: string
+  positionId: string
   employmentType: EmploymentType
   hireDate: string
   probationEndDate: string
@@ -66,6 +67,28 @@ export interface DepartmentInput {
   description: string
   leaderId: string
   status: EmployeeStatus
+}
+
+export interface Position {
+  id: string
+  code: string
+  name: string
+  description: string
+  status: EmployeeStatus
+  builtin: boolean
+  departmentIds: string[]
+  departmentNames: string[]
+  employeeCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PositionInput {
+  code: string
+  name: string
+  description: string
+  status: EmployeeStatus
+  departmentIds: string[]
 }
 
 export type DepartureStatus = 'pending_manager' | 'pending_hr' | 'approved' | 'rejected' | 'cancelled'
