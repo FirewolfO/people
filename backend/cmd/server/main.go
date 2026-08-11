@@ -20,6 +20,9 @@ func main() {
 	}, store.OAuthClientSeed{
 		ClientID: cfg.BlogClientID, Name: "内部博客", ClientSecret: cfg.BlogClientSecret,
 		RedirectURIs: cfg.BlogRedirectURIs, AllowedScopes: []string{"openid", "profile"},
+	}, store.OAuthClientSeed{
+		ClientID: cfg.AIWorkbenchClientID, Name: "AI 工作台", ClientSecret: cfg.AIWorkbenchClientSecret,
+		RedirectURIs: cfg.AIWorkbenchRedirectURIs, AllowedScopes: []string{"openid", "profile"},
 	})
 	if err != nil {
 		log.Fatalf("open people database: %v", err)

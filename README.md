@@ -44,7 +44,7 @@ People 后端对应的上游路径为 `/api/v1/inner/directory/**`，只接受 `
 
 ## OAuth
 
-People 提供 OAuth 2.0 授权码模式供内部系统登录。Permission 的员工与部门同步使用上面的 Gateway Inner 接口。默认预置 Permission 和 Gateway Admin 两个 OAuth 客户端：
+People 提供 OAuth 2.0 授权码模式供内部系统登录。Permission 的员工与部门同步使用上面的 Gateway Inner 接口。默认预置 Permission、Gateway Admin、内部 Blog 和 AI Workbench OAuth 客户端：
 
 用户进入 OAuth 授权页后必须明确点击授权，不会因已有 People 登录态而自动跳转。授权页支持临时切换其他 People 账号：切换时只校验该账号并为本次 OAuth 签发授权码，不创建或替换 People 浏览器会话，返回 People 后仍保持原登录身份。
 
@@ -56,6 +56,14 @@ Redirect URI: Permission 独立控制台和 admin-ui 的 /oauth/callback
 Client ID: gateway-admin-ui
 Client Secret: gateway-admin-local-client-secret-change-me
 Redirect URI: Gateway 独立控制台的 /oauth/callback
+
+Client ID: blog-ui
+Client Secret: blog-local-client-secret-change-me
+Redirect URI: Blog 独立控制台的 /oauth/callback
+
+Client ID: ai-workbench-ui
+Client Secret: ai-workbench-local-client-secret-change-me
+Redirect URI: AI Workbench 独立工作台的 /oauth/callback
 ```
 
 生产环境必须通过环境变量替换 Client Secret，并配置准确的回调地址。

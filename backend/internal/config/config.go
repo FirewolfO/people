@@ -26,6 +26,9 @@ type Config struct {
 	BlogClientID            string
 	BlogClientSecret        string
 	BlogRedirectURIs        []string
+	AIWorkbenchClientID     string
+	AIWorkbenchClientSecret string
+	AIWorkbenchRedirectURIs []string
 	PermissionAPIBaseURL    string
 	PermissionServiceID     string
 	PermissionServiceSecret string
@@ -51,6 +54,9 @@ func Load() Config {
 		BlogClientID:            env("PEOPLE_BLOG_CLIENT_ID", "blog-ui"),
 		BlogClientSecret:        env("PEOPLE_BLOG_CLIENT_SECRET", "blog-local-client-secret-change-me"),
 		BlogRedirectURIs:        split(env("PEOPLE_BLOG_REDIRECT_URIS", "http://localhost:5179/oauth/callback,http://127.0.0.1:5179/oauth/callback,http://10.251.237.216:5179/oauth/callback")),
+		AIWorkbenchClientID:     env("PEOPLE_AI_WORKBENCH_CLIENT_ID", "ai-workbench-ui"),
+		AIWorkbenchClientSecret: env("PEOPLE_AI_WORKBENCH_CLIENT_SECRET", "ai-workbench-local-client-secret-change-me"),
+		AIWorkbenchRedirectURIs: split(env("PEOPLE_AI_WORKBENCH_REDIRECT_URIS", "http://localhost:5181/oauth/callback,http://127.0.0.1:5181/oauth/callback,http://10.251.237.216:5181/oauth/callback")),
 		PermissionAPIBaseURL:    env("PEOPLE_PERMISSION_API_BASE_URL", "http://127.0.0.1:8081/api/v1"),
 		PermissionServiceID:     env("PEOPLE_PERMISSION_SERVICE_CLIENT_ID", "people-service"),
 		PermissionServiceSecret: env("PEOPLE_PERMISSION_SERVICE_CLIENT_SECRET", "local-development-people-permission-secret-key"),
