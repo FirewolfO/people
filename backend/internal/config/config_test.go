@@ -18,6 +18,10 @@ func TestDefaultOAuthRedirectURIsIncludeNetworkFrontends(t *testing.T) {
 	if configured.AIWorkbenchClientID != "ai-workbench-ui" {
 		t.Fatalf("unexpected AI Workbench OAuth client: %q", configured.AIWorkbenchClientID)
 	}
+	assertContains(t, configured.LinkUpRedirectURIs, "https://im.lxvb.top/oauth/callback")
+	if configured.LinkUpClientID != "linkup-im" {
+		t.Fatalf("unexpected LinkUp OAuth client: %q", configured.LinkUpClientID)
+	}
 }
 
 func assertContains(t *testing.T, values []string, expected string) {

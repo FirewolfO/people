@@ -112,6 +112,19 @@ func TestNewEmployeeMustSetPasswordBeforeOAuth(t *testing.T) {
 	}
 }
 
+func TestBuiltInAdminKeepsManagementPermissionsWithoutPermissionService(t *testing.T) {
+	svc := newTestService(t)
+	admin, _, err := svc.Login("admin", "admin")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	for _, code := range elevatedPermissions {
+		if !svc.HasPermission(admin, code) {
+			t.Fatalf("admin missing permission %q", code)
+		}
+	}
+}
+
 func TestEmployeeRequiresManagedDepartment(t *testing.T) {
 	svc := newTestService(t)
 	input := EmployeeInput{Username: "bob", DisplayName: "Bob", Role: model.RoleEmployee, Status: model.StatusEnabled}

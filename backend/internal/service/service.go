@@ -132,6 +132,10 @@ func (s *Service) loadPermissions(employee *model.Employee) {
 		return
 	}
 	employee.Permissions = []string{}
+	if employee.Role == model.RoleAdmin {
+		employee.Permissions = append(employee.Permissions, elevatedPermissions...)
+		return
+	}
 	if s.authorizer == nil {
 		return
 	}

@@ -29,6 +29,9 @@ type Config struct {
 	AIWorkbenchClientID     string
 	AIWorkbenchClientSecret string
 	AIWorkbenchRedirectURIs []string
+	LinkUpClientID          string
+	LinkUpClientSecret      string
+	LinkUpRedirectURIs      []string
 	PermissionAPIBaseURL    string
 	PermissionServiceID     string
 	PermissionServiceSecret string
@@ -57,6 +60,9 @@ func Load() Config {
 		AIWorkbenchClientID:     env("PEOPLE_AI_WORKBENCH_CLIENT_ID", "ai-workbench-ui"),
 		AIWorkbenchClientSecret: env("PEOPLE_AI_WORKBENCH_CLIENT_SECRET", "ai-workbench-local-client-secret-change-me"),
 		AIWorkbenchRedirectURIs: split(env("PEOPLE_AI_WORKBENCH_REDIRECT_URIS", "http://localhost:5181/oauth/callback,http://127.0.0.1:5181/oauth/callback,http://10.251.237.216:5181/oauth/callback")),
+		LinkUpClientID:          env("PEOPLE_LINKUP_CLIENT_ID", "linkup-im"),
+		LinkUpClientSecret:      env("PEOPLE_LINKUP_CLIENT_SECRET", "linkup-local-client-secret-change-me"),
+		LinkUpRedirectURIs:      split(env("PEOPLE_LINKUP_REDIRECT_URIS", "http://localhost:3000/oauth/callback,https://im.lxvb.top/oauth/callback")),
 		PermissionAPIBaseURL:    env("PEOPLE_PERMISSION_API_BASE_URL", "http://127.0.0.1:8081/api/v1"),
 		PermissionServiceID:     env("PEOPLE_PERMISSION_SERVICE_CLIENT_ID", "people-service"),
 		PermissionServiceSecret: env("PEOPLE_PERMISSION_SERVICE_CLIENT_SECRET", "local-development-people-permission-secret-key"),

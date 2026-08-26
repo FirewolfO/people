@@ -1,0 +1,72 @@
+name: people
+
+x-people-gateway: &people-gateway
+  PEOPLE_GATEWAY_ACCESS_KEY: ${PEOPLE_GATEWAY_ACCESS_KEY:?set PEOPLE_GATEWAY_ACCESS_KEY}
+  PEOPLE_GATEWAY_SECRET_KEY: ${PEOPLE_GATEWAY_SECRET_KEY:?set PEOPLE_GATEWAY_SECRET_KEY}
+
+services:
+  backend:
+    build: ./backend
+    image: people-backend:1.0.0
+    restart: unless-stopped
+    environment:
+      <<: *people-gateway
+      PEOPLE_ADDR: :8085
+      PEOPLE_DB_DSN: /data/people.db
+      PEOPLE_COOKIE_SECURE: "true"
+      PEOPLE_AI_WORKBENCH_REDIRECT_URIS: https://ai.lxvb.top/oauth/callback
+      PEOPLE_AI_WORKBENCH_CLIENT_SECRET: ${PEOPLE_AI_WORKBENCH_CLIENT_SECRET:?set PEOPLE_AI_WORKBENCH_CLIENT_SECRET}
+      PEOPLE_LINKUP_REDIRECT_URIS: https://im.lxvb.top/oauth/callback
+      PEOPLE_LINKUP_CLIENT_SECRET: ${PEOPLE_LINKUP_CLIENT_SECRET:?set PEOPLE_LINKUP_CLIENT_SECRET}
+      PEOPLE_PERMISSION_API_BASE_URL: ${PEOPLE_PERMISSION_API_BASE_URL:-http://host.docker.internal:8081/api/v1}
+      PEOPLE_PERMISSION_SERVICE_CLIENT_ID: ${PEOPLE_PERMISSION_SERVICE_CLIENT_ID:-people-service}
+      PEOPLE_PERMISSION_SERVICE_CLIENT_SECRET: ${PEOPLE_PERMISSION_SERVICE_CLIENT_SECRET:-local-development-people-permission-secret-key}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - people-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8085/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  edge:
+    build: ./backend
+    image: people-backend:1.0.0
+    restart: unless-stopped
+    command: ["/usr/local/bin/people-edge"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      <<: *people-gateway
+      PEOPLE_EDGE_ADDR: :8082
+      PEOPLE_UPSTREAM_URL: http://backend:8085
+    networks:
+      default:
+      people-services:
+        aliases:
+          - people-edge
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8082/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build: ./frontend
+    image: people-frontend:1.0.0
+    restart: unless-stopped
+    depends_on:
+      edge:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:18084:8080
+
+volumes:
+  people-data:
+
+networks:
+  people-services:
+    name: people-services

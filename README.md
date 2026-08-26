@@ -95,3 +95,18 @@ cd ../frontend
 npm run typecheck
 npm run build
 ```
+
+## Docker 与公网部署
+
+仓库根目录的 `compose.yaml` 会启动 People 后端、Gateway-HMAC 边缘代理和 Nginx 前端。浏览器仍只访问 `/api/open/people/**`，边缘代理将请求签名后转发到后端的 `/api/v1/**`；后端不会接受未签名的业务请求。
+
+```bash
+export PEOPLE_GATEWAY_ACCESS_KEY='替换为生产 AK'
+export PEOPLE_GATEWAY_SECRET_KEY='替换为至少 32 字符的生产 SK'
+export PEOPLE_AI_WORKBENCH_CLIENT_SECRET='与 AI Workbench 一致'
+export PEOPLE_LINKUP_CLIENT_SECRET='与 IM 服务一致'
+docker compose up -d --build
+curl http://127.0.0.1:18084/api/open/people/auth/csrf
+```
+
+生产源站只监听 `127.0.0.1:18084`，公网入口为 `https://people.lxvb.top`。edge 同时加入仅容器使用的 `people-services` 网络，AI Workbench 与连线通过 `http://people-edge:8082/api/open/people` 调用，不需要开放额外宿主机端口。内置 `admin` 角色在 Permission 服务暂不可达时仍保留 People 管理权限；普通员工的扩展权限继续由 Permission 判定。
