@@ -114,7 +114,7 @@ func TestNewEmployeeMustSetPasswordBeforeOAuth(t *testing.T) {
 
 func TestBuiltInAdminKeepsManagementPermissionsWithoutPermissionService(t *testing.T) {
 	svc := newTestService(t)
-	admin, _, err := svc.Login("admin", "admin")
+	admin, _, err := svc.Login("admin", "admin123!")
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}
@@ -273,7 +273,7 @@ func TestPositionManyToManyAndEmployeeAssignment(t *testing.T) {
 
 func TestOAuthRequiresClientSecretAndConsumesCode(t *testing.T) {
 	svc := newTestService(t)
-	employee, _, err := svc.Login("admin", "admin")
+	employee, _, err := svc.Login("admin", "admin123!")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func TestOAuthAccountSwitchDoesNotReplacePeopleSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, adminToken, err := svc.Login("admin", "admin")
+	_, adminToken, err := svc.Login("admin", "admin123!")
 	if err != nil {
 		t.Fatal(err)
 	}

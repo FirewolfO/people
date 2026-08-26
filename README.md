@@ -12,7 +12,7 @@ People 是企业内部员工信息系统，账号体系与 Sign-in 完全隔离�
 
 ```text
 用户名：admin
-密码：admin
+密码：admin123!
 ```
 
 生产环境首次登录后应立即修改默认密码。
@@ -44,7 +44,7 @@ People 后端对应的上游路径为 `/api/v1/inner/directory/**`，只接受 `
 
 ## OAuth
 
-People 提供 OAuth 2.0 授权码模式供内部系统登录。Permission 的员工与部门同步使用上面的 Gateway Inner 接口。默认预置 Permission、Gateway Admin、内部 Blog 和 AI Workbench OAuth 客户端：
+People 提供 OAuth 2.0 授权码模式供内部系统登录。Permission 的员工与部门同步使用上面的 Gateway Inner 接口。默认预置 Permission、Gateway Admin、内部 Blog、AI Workbench、App Center 和语雀 OAuth 客户端：
 
 用户进入 OAuth 授权页后必须明确点击授权，不会因已有 People 登录态而自动跳转。授权页支持临时切换其他 People 账号：切换时只校验该账号并为本次 OAuth 签发授权码，不创建或替换 People 浏览器会话，返回 People 后仍保持原登录身份。
 
@@ -64,6 +64,10 @@ Redirect URI: Blog 独立控制台的 /oauth/callback
 Client ID: ai-workbench-ui
 Client Secret: ai-workbench-local-client-secret-change-me
 Redirect URI: AI Workbench 独立工作台的 /oauth/callback
+
+Client ID: app-center
+Client Secret: app-center-local-client-secret-change-me
+Redirect URI: App Center 的 /oauth/callback
 ```
 
 生产环境必须通过环境变量替换 Client Secret，并配置准确的回调地址。
@@ -104,6 +108,7 @@ npm run build
 export PEOPLE_GATEWAY_ACCESS_KEY='替换为生产 AK'
 export PEOPLE_GATEWAY_SECRET_KEY='替换为至少 32 字符的生产 SK'
 export PEOPLE_AI_WORKBENCH_CLIENT_SECRET='与 AI Workbench 一致'
+export PEOPLE_APP_CENTER_CLIENT_SECRET='与 App Center 一致'
 export PEOPLE_LINKUP_CLIENT_SECRET='与 IM 服务一致'
 docker compose up -d --build
 curl http://127.0.0.1:18084/api/open/people/auth/csrf

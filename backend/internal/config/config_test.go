@@ -7,6 +7,7 @@ func TestDefaultOAuthRedirectURIsIncludeNetworkFrontends(t *testing.T) {
 	t.Setenv("PEOPLE_GATEWAY_REDIRECT_URIS", "")
 	t.Setenv("PEOPLE_BLOG_REDIRECT_URIS", "")
 	t.Setenv("PEOPLE_AI_WORKBENCH_REDIRECT_URIS", "")
+	t.Setenv("PEOPLE_APP_CENTER_REDIRECT_URIS", "")
 
 	configured := Load()
 	assertContains(t, configured.PermissionRedirectURIs, "http://10.251.237.216:5174/oauth/callback")
@@ -17,6 +18,10 @@ func TestDefaultOAuthRedirectURIsIncludeNetworkFrontends(t *testing.T) {
 	assertContains(t, configured.AIWorkbenchRedirectURIs, "http://10.251.237.216:5181/oauth/callback")
 	if configured.AIWorkbenchClientID != "ai-workbench-ui" {
 		t.Fatalf("unexpected AI Workbench OAuth client: %q", configured.AIWorkbenchClientID)
+	}
+	assertContains(t, configured.AppCenterRedirectURIs, "https://apps.lxvb.top/oauth/callback")
+	if configured.AppCenterClientID != "app-center" {
+		t.Fatalf("unexpected App Center OAuth client: %q", configured.AppCenterClientID)
 	}
 	assertContains(t, configured.LinkUpRedirectURIs, "https://im.lxvb.top/oauth/callback")
 	if configured.LinkUpClientID != "linkup-im" {

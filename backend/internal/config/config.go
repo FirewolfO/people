@@ -29,6 +29,9 @@ type Config struct {
 	AIWorkbenchClientID     string
 	AIWorkbenchClientSecret string
 	AIWorkbenchRedirectURIs []string
+	AppCenterClientID       string
+	AppCenterClientSecret   string
+	AppCenterRedirectURIs   []string
 	LinkUpClientID          string
 	LinkUpClientSecret      string
 	LinkUpRedirectURIs      []string
@@ -60,6 +63,9 @@ func Load() Config {
 		AIWorkbenchClientID:     env("PEOPLE_AI_WORKBENCH_CLIENT_ID", "ai-workbench-ui"),
 		AIWorkbenchClientSecret: env("PEOPLE_AI_WORKBENCH_CLIENT_SECRET", "ai-workbench-local-client-secret-change-me"),
 		AIWorkbenchRedirectURIs: split(env("PEOPLE_AI_WORKBENCH_REDIRECT_URIS", "http://localhost:5181/oauth/callback,http://127.0.0.1:5181/oauth/callback,http://10.251.237.216:5181/oauth/callback")),
+		AppCenterClientID:       env("PEOPLE_APP_CENTER_CLIENT_ID", "app-center"),
+		AppCenterClientSecret:   env("PEOPLE_APP_CENTER_CLIENT_SECRET", "app-center-local-client-secret-change-me"),
+		AppCenterRedirectURIs:   split(env("PEOPLE_APP_CENTER_REDIRECT_URIS", "http://localhost:3000/oauth/callback,http://127.0.0.1:3000/oauth/callback,https://apps.lxvb.top/oauth/callback")),
 		LinkUpClientID:          env("PEOPLE_LINKUP_CLIENT_ID", "linkup-im"),
 		LinkUpClientSecret:      env("PEOPLE_LINKUP_CLIENT_SECRET", "linkup-local-client-secret-change-me"),
 		LinkUpRedirectURIs:      split(env("PEOPLE_LINKUP_REDIRECT_URIS", "http://localhost:3000/oauth/callback,https://im.lxvb.top/oauth/callback")),

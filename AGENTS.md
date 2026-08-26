@@ -9,7 +9,7 @@
 
 ## 安全与账号
 
-- 系统初始化管理员账号固定为 `admin`，初始密码为 `admin`；生产部署后应立即修改。
+- 系统初始化管理员账号固定为 `admin`，初始密码为 `admin123!`；生产部署后应立即修改。
 - 管理员创建员工时不设置初始密码。员工在 `mustChangePassword=true` 阶段首次及后续登录均不校验密码，但只能访问当前会话、退出和修改密码接口；成功设置密码后才恢复标准密码校验和其他业务能力。
 - 密码必须使用可靠算法哈希，Session Cookie 必须为 HttpOnly，写请求必须校验 CSRF。密码、OAuth Client Secret、会话令牌和 Gateway SK 不得写入日志。
 - OAuth 授权码必须单次使用、短时有效，并严格校验 client、redirect URI 和 state；Client Secret 只允许由服务端持有。

@@ -24,7 +24,10 @@ func main() {
 		ClientID: cfg.AIWorkbenchClientID, Name: "AI 工作台", ClientSecret: cfg.AIWorkbenchClientSecret,
 		RedirectURIs: cfg.AIWorkbenchRedirectURIs, AllowedScopes: []string{"openid", "profile"},
 	}, store.OAuthClientSeed{
-		ClientID: cfg.LinkUpClientID, Name: "连线 IM", ClientSecret: cfg.LinkUpClientSecret,
+		ClientID: cfg.AppCenterClientID, Name: "App Center", ClientSecret: cfg.AppCenterClientSecret,
+		RedirectURIs: cfg.AppCenterRedirectURIs, AllowedScopes: []string{"openid", "profile"},
+	}, store.OAuthClientSeed{
+		ClientID: cfg.LinkUpClientID, Name: "语雀", ClientSecret: cfg.LinkUpClientSecret,
 		RedirectURIs: cfg.LinkUpRedirectURIs, AllowedScopes: []string{"openid", "profile"},
 	})
 	if err != nil {

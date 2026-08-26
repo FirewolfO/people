@@ -50,7 +50,7 @@ func Open(dsn, permissionClientID, permissionClientSecret string, redirectURIs [
 	if err := seedPositions(db); err != nil {
 		return nil, err
 	}
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte("admin"), 12)
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte("admin123!"), 12)
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +68,27 @@ func Open(dsn, permissionClientID, permissionClientSecret string, redirectURIs [
 	if adminCreate.RowsAffected == 1 {
 		if err := db.Model(&model.Employee{}).Where("id = ?", admin.ID).Update("must_change_password", false).Error; err != nil {
 			return nil, err
+		}
+	} else {
+		var existing model.Employee
+		if err := db.Where("username = ?", "admin").First(&existing).Error; err != nil {
+			return nil, err
+		}
+		if bcrypt.CompareHashAndPassword([]byte(existing.PasswordHash), []byte("admin")) == nil {
+			if err := db.Transaction(func(tx *gorm.DB) error {
+				updated := tx.Model(&model.Employee{}).
+					Where("id = ? AND password_hash = ?", existing.ID, existing.PasswordHash).
+					Update("password_hash", string(passwordHash))
+				if updated.Error != nil {
+					return updated.Error
+				}
+				if updated.RowsAffected == 0 {
+					return errors.New("administrator password changed during migration")
+				}
+				return tx.Where("employee_id = ?", existing.ID).Delete(&model.Session{}).Error
+			}); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := migrateLegacyPositions(db); err != nil {
