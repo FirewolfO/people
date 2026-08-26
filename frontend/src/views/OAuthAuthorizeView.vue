@@ -25,6 +25,8 @@ const applicationName = computed(() => ({
   'permission-ui': '权限中心',
   'gateway-admin-ui': 'Gateway 管理系统',
   'blog-ui': '内部博客',
+  'app-center': 'App Center',
+  'linkup-im': '语雀',
 }[clientID.value] || clientID.value))
 const currentName = computed(() => auth.state.user?.displayName || auth.state.user?.username || '')
 
