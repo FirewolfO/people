@@ -23,6 +23,10 @@ services:
       PEOPLE_PERMISSION_SERVICE_CLIENT_SECRET: ${PEOPLE_PERMISSION_SERVICE_CLIENT_SECRET:-local-development-people-permission-secret-key}
     extra_hosts:
       - host.docker.internal:host-gateway
+    networks:
+      default:
+        aliases:
+          - people-backend
     volumes:
       - people-data:/data
     healthcheck:
@@ -42,7 +46,7 @@ services:
     environment:
       <<: *people-gateway
       PEOPLE_EDGE_ADDR: :8082
-      PEOPLE_UPSTREAM_URL: http://backend:8085
+      PEOPLE_UPSTREAM_URL: http://people-backend:8085
     networks:
       default:
       people-services:
